@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 public class HttpClientDemandTest extends AbstractTest
 {
@@ -166,21 +167,28 @@ public class HttpClientDemandTest extends AbstractTest
         assertEquals(1, contentQueue.size());
         assertEquals(1, callbackQueue.size());
 
-        // Demand more buffers.
-        int count = 2;
+        // Demand one more buffer.
         LongConsumer demand = demandQueue.poll();
         assertNotNull(demand);
-        demand.accept(count);
+        demand.accept(1);
         // The client should have received just `count` more buffers.
         Thread.sleep(1000);
-        assertEquals(count, demandQueue.size());
-        assertEquals(1 + count, contentQueue.size());
-        assertEquals(1 + count, callbackQueue.size());
+        assertEquals(1, demandQueue.size());
+        assertEquals(2, contentQueue.size());
+        assertEquals(2, callbackQueue.size());
 
         // Demand all the rest.
         demand = demandQueue.poll();
         assertNotNull(demand);
-        demand.accept(Long.MAX_VALUE);
+        long before = System.nanoTime();
+        // Spin on demand until content.length bytes have been read.
+        while (content.length > sum(contentQueue))
+        {
+            if (System.nanoTime() - before > TimeUnit.SECONDS.toNanos(5L))
+                fail("Failed to demand all content");
+            demand.accept(1);
+        }
+        demand.accept(1); // Demand one last time to get EOF.
         assertTrue(resultLatch.await(5, TimeUnit.SECONDS));
 
         byte[] received = new byte[content.length];
@@ -193,6 +201,16 @@ public class HttpClientDemandTest extends AbstractTest
         assertArrayEquals(content, received);
 
         callbackQueue.forEach(Callback::succeeded);
+    }
+
+    private static int sum(Queue<ByteBuffer> contentQueue)
+    {
+        int total = 0;
+        for (ByteBuffer byteBuffer : contentQueue)
+        {
+            total += byteBuffer.remaining();
+        }
+        return total;
     }
 
     @ParameterizedTest

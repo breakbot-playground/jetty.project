@@ -15,6 +15,7 @@ package org.eclipse.jetty.client.http;
 
 import java.io.EOFException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
 
 import org.eclipse.jetty.client.HttpClient;
@@ -29,11 +30,11 @@ import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpParser;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpVersion;
+import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.io.EndPoint;
 import org.eclipse.jetty.io.RetainableByteBuffer;
 import org.eclipse.jetty.io.RetainableByteBufferPool;
 import org.eclipse.jetty.util.BufferUtil;
-import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.Promise;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +43,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpReceiverOverHTTP.class);
 
+    private final AtomicReference<Runnable> actionRef = new AtomicReference<>();
     private final LongAdder inMessages = new LongAdder();
     private final HttpParser parser;
     private final RetainableByteBufferPool retainableByteBufferPool;
@@ -51,6 +53,8 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     private boolean unsolicited;
     private String method;
     private int status;
+    private Content.Chunk chunk;
+    private ContentSource contentSource;
 
     public HttpReceiverOverHTTP(HttpChannelOverHTTP channel)
     {
@@ -58,14 +62,137 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         HttpClient httpClient = channel.getHttpDestination().getHttpClient();
         parser = new HttpParser(this, -1, httpClient.getHttpCompliance());
         HttpClientTransport transport = httpClient.getTransport();
-        if (transport instanceof HttpClientTransportOverHTTP)
+        if (transport instanceof HttpClientTransportOverHTTP httpTransport)
         {
-            HttpClientTransportOverHTTP httpTransport = (HttpClientTransportOverHTTP)transport;
             parser.setHeaderCacheSize(httpTransport.getHeaderCacheSize());
             parser.setHeaderCacheCaseSensitive(httpTransport.isHeaderCacheCaseSensitive());
         }
+        retainableByteBufferPool = httpClient.getByteBufferPool().asRetainableByteBufferPool();
+    }
 
-        this.retainableByteBufferPool = httpClient.getByteBufferPool().asRetainableByteBufferPool();
+    @Override
+    protected void reset()
+    {
+        super.reset();
+        parser.reset();
+        contentSource = null;
+    }
+
+    @Override
+    protected void dispose()
+    {
+        super.dispose();
+        parser.close();
+        contentSource = null;
+    }
+
+    @Override
+    protected Content.Source newContentSource()
+    {
+        if (contentSource != null)
+            throw new IllegalStateException();
+        contentSource = new ContentSource();
+        return contentSource;
+    }
+
+    private class ContentSource implements Content.Source
+    {
+        private static final Logger LOG = LoggerFactory.getLogger(ContentSource.class);
+
+        private Content.Chunk currentChunk;
+        private Runnable demandCallback;
+
+        @Override
+        public Content.Chunk read()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Reading");
+            Content.Chunk chunk = consumeCurrentChunk();
+            if (chunk != null)
+                return chunk;
+            currentChunk = HttpReceiverOverHTTP.this.read(false);
+            return consumeCurrentChunk();
+        }
+
+        public void onDataAvailable()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("onDataAvailable, demandCallback: {}", demandCallback);
+            if (demandCallback != null)
+                invokeDemandCallback();
+        }
+
+        private Content.Chunk consumeCurrentChunk()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Consuming current chunk {}", currentChunk);
+            Content.Chunk chunk = currentChunk;
+            currentChunk = Content.Chunk.next(chunk);
+            return chunk;
+        }
+
+        @Override
+        public void demand(Runnable demandCallback)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Registering demand {}", demandCallback);
+            if (demandCallback == null)
+                throw new IllegalArgumentException();
+            if (this.demandCallback != null)
+                throw new IllegalStateException();
+            this.demandCallback = demandCallback;
+            meetDemand();
+        }
+
+        private void meetDemand()
+        {
+            while (true)
+            {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Trying to meet demand, current chunk: {}", currentChunk);
+                if (currentChunk != null)
+                {
+                    invokeDemandCallback();
+                    break;
+                }
+                else
+                {
+                    currentChunk = HttpReceiverOverHTTP.this.read(true);
+                    if (currentChunk == null)
+                        return;
+                }
+            }
+        }
+
+        private void invokeDemandCallback()
+        {
+            Runnable demandCallback = this.demandCallback;
+            this.demandCallback = null;
+            if (LOG.isDebugEnabled())
+                LOG.debug("Invoking demand callback {}", demandCallback);
+            if (demandCallback != null)
+            {
+                try
+                {
+                    demandCallback.run();
+                }
+                catch (Throwable x)
+                {
+                    fail(x);
+                }
+            }
+        }
+
+        @Override
+        public void fail(Throwable failure)
+        {
+            if (currentChunk != null)
+            {
+                currentChunk.release();
+                failAndClose(failure);
+            }
+            currentChunk = Content.Chunk.from(failure);
+        }
     }
 
     @Override
@@ -84,12 +211,53 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         return networkBuffer == null ? null : networkBuffer.getBuffer();
     }
 
-    @Override
     public void receive()
     {
-        if (networkBuffer == null)
-            acquireNetworkBuffer();
-        process();
+        // This method is the callback of fill interest.
+        // As such, it is called repeatedly until the ContentSourceListener.onContentSource() loop gets started;
+        // meaning firstContent is false and it must register for fill interest if no filling was done
+        // until onContentSource() gets called.
+        // Once onContentSource() gets called, firstContent is true and it must just notify that content may be generated.
+
+        if (contentSource == null)
+        {
+            boolean setFillInterest = parseAndFill();
+            if (contentSource == null && setFillInterest)
+                fillInterested();
+        }
+        else
+        {
+            // This calls the demand callback of the onContentSource loop.
+            contentSource.onDataAvailable();
+        }
+    }
+
+    private Content.Chunk read(boolean fillInterestIfNeeded)
+    {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Reading, fillInterestIfNeeded={}", fillInterestIfNeeded);
+
+        Content.Chunk chunk = consumeChunk();
+        if (chunk != null)
+            return chunk;
+        boolean needFillInterest = parseAndFill();
+        if (LOG.isDebugEnabled())
+            LOG.debug("ParseAndFill needFillInterest {}", needFillInterest);
+        chunk = consumeChunk();
+        if (chunk != null)
+            return chunk;
+        if (needFillInterest && fillInterestIfNeeded)
+            fillInterested();
+        return null;
+    }
+
+    private Content.Chunk consumeChunk()
+    {
+        Content.Chunk chunk = this.chunk;
+        this.chunk = null;
+        if (LOG.isDebugEnabled())
+            LOG.debug("Receiver consuming chunk {}", chunk);
+        return chunk;
     }
 
     private void acquireNetworkBuffer()
@@ -149,21 +317,32 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         return upgradeBuffer;
     }
 
-    private void process()
+    /**
+     * Parses the networkBuffer until the next content is generated or until the buffer is depleted.
+     * If this method depletes the buffer, it will always try to re-fill until fill generates 0 byte.
+     * @return true if no bytes were filled.
+     */
+    private boolean parseAndFill()
     {
         HttpConnectionOverHTTP connection = getHttpConnection();
         EndPoint endPoint = connection.getEndPoint();
         try
         {
+            if (networkBuffer == null)
+                acquireNetworkBuffer();
             while (true)
             {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Parsing {}", BufferUtil.toDetailString(networkBuffer.getBuffer()));
                 // Always parse even empty buffers to advance the parser.
                 if (parse())
                 {
                     // Return immediately, as this thread may be in a race
                     // with e.g. another thread demanding more content.
-                    return;
+                    return false;
                 }
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Parser willing to advance");
 
                 // Connection may be closed in a parser callback.
                 if (connection.isClosed())
@@ -171,7 +350,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
                     if (LOG.isDebugEnabled())
                         LOG.debug("Closed {}", connection);
                     releaseNetworkBuffer();
-                    return;
+                    return false;
                 }
 
                 if (networkBuffer.isRetained())
@@ -188,16 +367,14 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
                 }
                 else if (read == 0)
                 {
-                    assert networkBuffer.isEmpty();
                     releaseNetworkBuffer();
-                    fillInterested();
-                    return;
+                    return true;
                 }
                 else
                 {
                     releaseNetworkBuffer();
                     shutdown();
-                    return;
+                    return false;
                 }
             }
         }
@@ -207,6 +384,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
                 LOG.debug("Error processing {}", endPoint, x);
             releaseNetworkBuffer();
             failAndClose(x);
+            return false;
         }
     }
 
@@ -220,15 +398,19 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         while (true)
         {
             boolean handle = parser.parseNext(networkBuffer.getBuffer());
-            boolean failed = isFailed();
             if (LOG.isDebugEnabled())
-                LOG.debug("Parse result={}, failed={}", handle, failed);
-            // When failed, it's safe to close the parser because there
-            // will be no races with other threads demanding more content.
-            if (failed)
-                parser.close();
+                LOG.debug("Parse result={} on {}", handle, this);
+            Runnable action = actionRef.getAndSet(null);
+            if (action != null)
+            {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Executing action after parser returned: {}", action);
+                action.run();
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Action executed after Parse result={}", handle);
+            }
             if (handle)
-                return !failed;
+                return !parser.isClose();
 
             boolean complete = this.complete;
             this.complete = false;
@@ -267,6 +449,8 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
 
     protected void fillInterested()
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Registering as fill interested");
         getHttpConnection().fillInterested();
     }
 
@@ -329,12 +513,18 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         // Store the EndPoint is case of upgrades, tunnels, etc.
         exchange.getRequest().getConversation().setAttribute(EndPoint.class.getName(), getHttpConnection().getEndPoint());
         getHttpConnection().onResponseHeaders(exchange);
-        return !responseHeaders(exchange);
+        if (LOG.isDebugEnabled())
+            LOG.debug("Setting action to responseHeaders(exchange)");
+        if (actionRef.getAndSet(() -> responseHeaders(exchange)) != null)
+            throw new IllegalStateException();
+        return true;
     }
 
     @Override
     public boolean content(ByteBuffer buffer)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Parser generated content {}", BufferUtil.toDetailString(buffer));
         HttpExchange exchange = getHttpExchange();
         unsolicited |= exchange == null;
         if (unsolicited)
@@ -342,11 +532,16 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
 
         RetainableByteBuffer networkBuffer = this.networkBuffer;
         networkBuffer.retain();
-        return !responseContent(exchange, buffer, Callback.from(networkBuffer::release, failure ->
-        {
-            networkBuffer.release();
-            failAndClose(failure);
-        }));
+
+        if (chunk != null)
+            throw new IllegalStateException("Content generated with unconsumed content left");
+
+        chunk = Content.Chunk.from(buffer, false, networkBuffer);
+        if (LOG.isDebugEnabled())
+            LOG.debug("Setting action to contentSource.onDataAvailable()");
+        if (actionRef.getAndSet(contentSource::onDataAvailable) != null)
+            throw new IllegalStateException();
+        return true;
     }
 
     @Override
@@ -363,6 +558,8 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         if (unsolicited)
             return;
 
+        if (LOG.isDebugEnabled())
+            LOG.debug("Appending trailer '{}' to response", trailer);
         exchange.getResponse().trailer(trailer);
     }
 
@@ -384,10 +581,17 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
             complete = true;
         }
 
-        boolean stopParsing = !responseSuccess(exchange);
-        if (status == HttpStatus.SWITCHING_PROTOCOLS_101)
-            stopParsing = true;
-        return stopParsing;
+        if (chunk != null)
+            throw new IllegalStateException();
+        chunk = Content.Chunk.EOF;
+
+        boolean isUpgrade = status == HttpStatus.SWITCHING_PROTOCOLS_101;
+        boolean isTunnel = getHttpChannel().isTunnel(method, status);
+        Runnable task = isUpgrade || isTunnel ? null : this::fillInterested;
+        if (LOG.isDebugEnabled())
+            LOG.debug("Message complete, calling response success with task {}", task);
+        responseSuccess(exchange, task);
+        return false;
     }
 
     @Override
@@ -417,20 +621,13 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         }
     }
 
-    @Override
-    protected void reset()
-    {
-        super.reset();
-        parser.reset();
-    }
-
     private void failAndClose(Throwable failure)
     {
-        responseFailure(failure, Promise.from(failed ->
+        responseFailure(failure, Promise.from((failed) ->
         {
             if (failed)
                 getHttpConnection().close(failure);
-        }, f -> getHttpConnection().close(failure)));
+        }, x -> getHttpConnection().close(failure)));
     }
 
     long getMessagesIn()

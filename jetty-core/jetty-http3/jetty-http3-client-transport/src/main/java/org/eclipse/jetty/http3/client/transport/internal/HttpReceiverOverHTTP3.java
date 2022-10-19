@@ -13,21 +13,16 @@
 
 package org.eclipse.jetty.http3.client.transport.internal;
 
-import java.nio.ByteBuffer;
-
 import org.eclipse.jetty.client.HttpExchange;
 import org.eclipse.jetty.client.HttpReceiver;
 import org.eclipse.jetty.client.HttpResponse;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
-import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http3.api.Stream;
 import org.eclipse.jetty.http3.frames.HeadersFrame;
-import org.eclipse.jetty.http3.internal.HTTP3ErrorCode;
-import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.util.Promise;
-import org.eclipse.jetty.util.thread.Invocable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,29 +30,172 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpReceiverOverHTTP3.class);
 
+    private ContentSource contentSource;
+
     protected HttpReceiverOverHTTP3(HttpChannelOverHTTP3 channel)
     {
         super(channel);
     }
 
     @Override
-    protected HttpChannelOverHTTP3 getHttpChannel()
+    protected void reset()
     {
-        return (HttpChannelOverHTTP3)super.getHttpChannel();
+        super.reset();
+        contentSource = null;
     }
 
     @Override
-    protected void receive()
+    protected void dispose()
     {
-        // Called when the application resumes demand of content.
-        if (LOG.isDebugEnabled())
-            LOG.debug("resuming response processing on {}", this);
+        super.dispose();
+        contentSource = null;
+    }
 
-        HttpExchange exchange = getHttpExchange();
-        if (exchange == null)
-            return;
+    @Override
+    protected Content.Source newContentSource()
+    {
+        contentSource = new ContentSource();
+        return contentSource;
+    }
 
-        getHttpChannel().getStream().demand();
+    @Override
+    public void receive()
+    {
+        onDataAvailable(null);
+    }
+
+    private class ContentSource implements Content.Source
+    {
+        private static final Logger LOG = LoggerFactory.getLogger(ContentSource.class);
+
+        private Content.Chunk currentChunk;
+        private Runnable demandCallback;
+        private boolean responseSucceeded;
+
+        @Override
+        public Content.Chunk read()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Reading");
+            Content.Chunk chunk = consumeCurrentChunk();
+            if (chunk != null)
+                return chunk;
+            currentChunk = read(false);
+            return consumeCurrentChunk();
+        }
+
+        private Content.Chunk read(boolean fillInterestIfNeeded)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Reading, fillInterestIfNeeded={}", fillInterestIfNeeded);
+            Stream stream = getHttpChannel().getStream();
+            Stream.Data data = stream.readData();
+            if (LOG.isDebugEnabled())
+                LOG.debug("Read stream data {}", data);
+            if (data == null)
+            {
+                if (fillInterestIfNeeded)
+                    stream.demand();
+                return null;
+            }
+            if (data.isLast() && !data.getByteBuffer().hasRemaining())
+            {
+                data.release();
+                return Content.Chunk.EOF;
+            }
+            return Content.Chunk.from(data.getByteBuffer(), false, data);
+        }
+
+        public void onDataAvailable()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("onDataAvailable, demandCallback: {}", demandCallback);
+            if (demandCallback != null)
+                invokeDemandCallback();
+        }
+
+        private Content.Chunk consumeCurrentChunk()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Consuming current chunk {}; end of stream reached? {}", currentChunk, responseSucceeded);
+            if (currentChunk == Content.Chunk.EOF && !responseSucceeded)
+            {
+                responseSucceeded = true;
+                responseSuccess(getHttpExchange());
+            }
+            Content.Chunk chunk = currentChunk;
+            currentChunk = Content.Chunk.next(chunk);
+            return chunk;
+        }
+
+        @Override
+        public void demand(Runnable demandCallback)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Registering demand {}", demandCallback);
+            if (demandCallback == null)
+                throw new IllegalArgumentException();
+            if (this.demandCallback != null)
+                throw new IllegalStateException();
+            this.demandCallback = demandCallback;
+            meetDemand();
+        }
+
+        private void meetDemand()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Trying to meet demand, current chunk: {}", currentChunk);
+            while (true)
+            {
+                if (currentChunk != null)
+                {
+                    invokeDemandCallback();
+                    break;
+                }
+                else
+                {
+                    currentChunk = read(true);
+                    if (currentChunk == null)
+                        return;
+                }
+            }
+        }
+
+        private void invokeDemandCallback()
+        {
+            Runnable demandCallback = this.demandCallback;
+            this.demandCallback = null;
+            if (LOG.isDebugEnabled())
+                LOG.debug("Invoking demand callback {}", demandCallback);
+            if (demandCallback != null)
+            {
+                try
+                {
+                    demandCallback.run();
+                }
+                catch (Throwable x)
+                {
+                    fail(x);
+                }
+            }
+        }
+
+        @Override
+        public void fail(Throwable failure)
+        {
+            if (currentChunk != null)
+            {
+                currentChunk.release();
+                failAndClose(failure);
+            }
+            currentChunk = Content.Chunk.from(failure);
+        }
+    }
+
+    @Override
+    protected HttpChannelOverHTTP3 getHttpChannel()
+    {
+        return (HttpChannelOverHTTP3)super.getHttpChannel();
     }
 
     @Override
@@ -71,82 +209,30 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
         MetaData.Response response = (MetaData.Response)frame.getMetaData();
         httpResponse.version(response.getHttpVersion()).status(response.getStatus()).reason(response.getReason());
 
-        if (responseBegin(exchange))
+        responseBegin(exchange);
+        HttpFields headers = response.getFields();
+        for (HttpField header : headers)
         {
-            HttpFields headers = response.getFields();
-            for (HttpField header : headers)
-            {
-                if (!responseHeader(exchange, header))
-                    return;
-            }
-
-            // TODO: add support for HttpMethod.CONNECT.
-
-            if (responseHeaders(exchange))
-            {
-                int status = response.getStatus();
-                if (frame.isLast() || HttpStatus.isInterim(status))
-                    responseSuccess(exchange);
-                else
-                    stream.demand();
-            }
-            else
-            {
-                if (LOG.isDebugEnabled())
-                    LOG.debug("stalling response processing, no demand after headers on {}", this);
-            }
+            responseHeader(exchange, header);
         }
+
+        // TODO: add support for HttpMethod.CONNECT.
+
+        responseHeaders(exchange);
     }
 
     @Override
     public void onDataAvailable(Stream.Client stream)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("onDataAvailable");
+
         HttpExchange exchange = getHttpExchange();
         if (exchange == null)
             return;
 
-        Stream.Data data = stream.readData();
-        if (data != null)
-        {
-            ByteBuffer byteBuffer = data.getByteBuffer();
-            if (byteBuffer.hasRemaining())
-            {
-                Callback callback = Callback.from(Invocable.InvocationType.NON_BLOCKING, data::release, x ->
-                {
-                    data.release();
-                    responseFailure(x, Promise.from(failed ->
-                    {
-                        if (failed)
-                            stream.reset(HTTP3ErrorCode.REQUEST_CANCELLED_ERROR.code(), x);
-                    }, f -> stream.reset(HTTP3ErrorCode.INTERNAL_ERROR.code(), x)));
-                });
-                boolean proceed = responseContent(exchange, byteBuffer, callback);
-                if (proceed)
-                {
-                    if (data.isLast())
-                        responseSuccess(exchange);
-                    else
-                        stream.demand();
-                }
-                else
-                {
-                    if (LOG.isDebugEnabled())
-                        LOG.debug("stalling response processing, no demand after {} on {}", data, this);
-                }
-            }
-            else
-            {
-                data.release();
-                if (data.isLast())
-                    responseSuccess(exchange);
-                else
-                    stream.demand();
-            }
-        }
-        else
-        {
-            stream.demand();
-        }
+        if (contentSource != null)
+            contentSource.onDataAvailable();
     }
 
     @Override
@@ -176,5 +262,11 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
     public void onFailure(Stream.Client stream, long error, Throwable failure)
     {
         responseFailure(failure, Promise.noop());
+    }
+
+    private void failAndClose(Throwable failure)
+    {
+        responseFailure(failure, Promise.from(failed -> getHttpChannel().getHttpConnection().close(failure),
+                x -> getHttpChannel().getHttpConnection().close(failure)));
     }
 }

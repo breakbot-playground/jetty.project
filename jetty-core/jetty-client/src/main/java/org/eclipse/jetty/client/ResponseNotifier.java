@@ -16,17 +16,14 @@ package org.eclipse.jetty.client;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.List;
-import java.util.function.LongConsumer;
-import java.util.function.ObjLongConsumer;
-import java.util.stream.Collectors;
 
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.api.Result;
 import org.eclipse.jetty.http.HttpField;
-import org.eclipse.jetty.util.Callback;
-import org.eclipse.jetty.util.CountingCallback;
+import org.eclipse.jetty.io.Content;
+import org.eclipse.jetty.io.content.ByteBufferContentSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -100,54 +97,41 @@ public class ResponseNotifier
         }
     }
 
-    public void notifyBeforeContent(Response response, ObjLongConsumer<Object> demand, List<Response.DemandedContentListener> contentListeners)
-    {
-        for (Response.DemandedContentListener listener : contentListeners)
-        {
-            notifyBeforeContent(listener, response, d -> demand.accept(listener, d));
-        }
-    }
-
-    private void notifyBeforeContent(Response.DemandedContentListener listener, Response response, LongConsumer demand)
-    {
-        try
-        {
-            listener.onBeforeContent(response, demand);
-        }
-        catch (Throwable x)
-        {
-            LOG.info("Exception while notifying listener {}", listener, x);
-        }
-    }
-
-    public void notifyContent(Response response, ObjLongConsumer<Object> demand, ByteBuffer buffer, Callback callback, List<Response.DemandedContentListener> contentListeners)
+    public void notifyContent(Response response, Content.Source contentSource, List<Response.ContentSourceListener> contentListeners)
     {
         int count = contentListeners.size();
         if (count == 0)
         {
-            callback.succeeded();
-            demand.accept(null, 1);
+            // Exactly 0 ContentSourceListener -> drive the read/demand loop internally here.
+            driveDemandLoop(contentSource);
         }
         else if (count == 1)
         {
-            Response.DemandedContentListener listener = contentListeners.get(0);
-            notifyContent(listener, response, d -> demand.accept(listener, d), buffer.slice(), callback);
+            // Exactly 1 ContentSourceListener -> notify it so that it drives the read/demand loop.
+            Response.ContentSourceListener listener = contentListeners.get(0);
+            notifyContent(listener, response, contentSource);
         }
         else
         {
-            callback = new CountingCallback(callback, count);
-            for (Response.DemandedContentListener listener : contentListeners)
-            {
-                notifyContent(listener, response, d -> demand.accept(listener, d), buffer.slice(), callback);
-            }
+            // TODO 2+ ContentSourceListener cannot be supported, 2+ other listeners can be supported -> listeners must be reworked
+            throw new UnsupportedOperationException(count + " listeners were registered while there should be exactly 1");
         }
     }
 
-    private void notifyContent(Response.DemandedContentListener listener, Response response, LongConsumer demand, ByteBuffer buffer, Callback callback)
+    private void driveDemandLoop(Content.Source contentSource)
+    {
+        Content.Chunk read = contentSource.read();
+        if (read != null)
+            read.release();
+        if (read == null || !read.isLast())
+            contentSource.demand(() -> driveDemandLoop(contentSource));
+    }
+
+    private void notifyContent(Response.ContentSourceListener listener, Response response, Content.Source contentSource)
     {
         try
         {
-            listener.onContent(response, demand, buffer, callback);
+            listener.onContentSource(response, contentSource);
         }
         catch (Throwable x)
         {
@@ -252,13 +236,12 @@ public class ResponseNotifier
             byte[] content = ((ContentResponse)response).getContent();
             if (content != null && content.length > 0)
             {
-                List<Response.DemandedContentListener> contentListeners = listeners.stream()
-                    .filter(Response.DemandedContentListener.class::isInstance)
-                    .map(Response.DemandedContentListener.class::cast)
-                    .collect(Collectors.toList());
-                ObjLongConsumer<Object> demand = (context, value) -> {};
-                notifyBeforeContent(response, demand, contentListeners);
-                notifyContent(response, demand, ByteBuffer.wrap(content), Callback.NOOP, contentListeners);
+                List<Response.ContentSourceListener> contentListeners = listeners.stream()
+                        .filter(Response.ContentSourceListener.class::isInstance)
+                        .map(Response.ContentSourceListener.class::cast)
+                        .toList();
+                ByteBufferContentSource byteBufferContentSource = new ByteBufferContentSource(ByteBuffer.wrap(content));
+                notifyContent(response, byteBufferContentSource, contentListeners);
             }
         }
     }

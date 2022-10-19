@@ -13,6 +13,7 @@
 
 package org.eclipse.jetty.util.thread;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.jetty.util.thread.Invocable.InvocationType;
@@ -45,8 +46,14 @@ public class SerializedInvoker
     public Runnable offer(Runnable task)
     {
         if (task == null)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Offering task null, skipping it");
             return null;
+        }
         Link link = new Link(task);
+        if (LOG.isDebugEnabled())
+            LOG.debug("Offering task {} wrapped in link {}", task, link);
         Link penultimate = _tail.getAndSet(link);
         if (penultimate == null)
             return link;
@@ -80,9 +87,20 @@ public class SerializedInvoker
      */
     public void run(Runnable task)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Running task {}", task);
         Runnable todo = offer(task);
         if (todo != null)
+        {
             todo.run();
+            if (LOG.isDebugEnabled())
+                LOG.debug("Executed {}", todo);
+        }
+        else
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Task was queued");
+        }
     }
 
     /**
@@ -92,9 +110,20 @@ public class SerializedInvoker
      */
     public void run(Runnable... tasks)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Running tasks {}", Arrays.toString(tasks));
         Runnable todo = offer(tasks);
         if (todo != null)
+        {
             todo.run();
+            if (LOG.isDebugEnabled())
+                LOG.debug("Executed {}", todo);
+        }
+        else
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Tasks were queued");
+        }
     }
 
     protected void onError(Runnable task, Throwable t)
@@ -104,6 +133,8 @@ public class SerializedInvoker
 
     private class Link implements Runnable, Invocable
     {
+        private static final Logger LOG = LoggerFactory.getLogger(Link.class);
+
         private final Runnable _task;
         private final AtomicReference<Link> _next = new AtomicReference<>();
 
@@ -140,16 +171,28 @@ public class SerializedInvoker
             Link link = this;
             while (link != null)
             {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Running link {} containing task {}", link, link._task);
                 try
                 {
                     link._task.run();
                 }
                 catch (Throwable t)
                 {
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("Failed while running link {} containing task {}", link, _task, t);
                     onError(link._task, t);
                 }
                 link = link.next();
+                if (link == null && LOG.isDebugEnabled())
+                    LOG.debug("Next link is null, execution is over");
             }
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("%s@%d -> %s", getClass().getSimpleName(), hashCode(), _next);
         }
     }
 }
