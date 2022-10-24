@@ -41,6 +41,7 @@ import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -121,6 +122,7 @@ public class FastCGIProxyHandlerTest
 
     @ParameterizedTest(name = "[{index}] sendStatus200={0}")
     @ValueSource(booleans = {true, false})
+    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testGETWithSmallResponseContent(boolean sendStatus200) throws Exception
     {
         testGETWithResponseContent(sendStatus200, 1024, 0);
@@ -128,6 +130,7 @@ public class FastCGIProxyHandlerTest
 
     @ParameterizedTest(name = "[{index}] sendStatus200={0}")
     @ValueSource(booleans = {true, false})
+    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testGETWithLargeResponseContent(boolean sendStatus200) throws Exception
     {
         testGETWithResponseContent(sendStatus200, 16 * 1024 * 1024, 0);
@@ -135,6 +138,7 @@ public class FastCGIProxyHandlerTest
 
     @ParameterizedTest(name = "[{index}] sendStatus200={0}")
     @ValueSource(booleans = {true, false})
+    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testGETWithLargeResponseContentWithSlowClient(boolean sendStatus200) throws Exception
     {
         testGETWithResponseContent(sendStatus200, 16 * 1024 * 1024, 1);

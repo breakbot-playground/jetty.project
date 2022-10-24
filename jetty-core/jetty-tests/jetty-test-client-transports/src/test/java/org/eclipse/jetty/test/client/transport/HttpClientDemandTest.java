@@ -39,6 +39,7 @@ import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -288,6 +289,7 @@ public class HttpClientDemandTest extends AbstractTest
 
     @ParameterizedTest
     @MethodSource("transports")
+    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testTwoListenersWithDifferentDemand(Transport transport) throws Exception
     {
         int bufferSize = 1536;

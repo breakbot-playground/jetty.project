@@ -34,6 +34,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mariadb.jdbc.MariaDbDataSource;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -126,6 +127,7 @@ public class DataSourceLoginServiceTest
     }
 
     @Test
+    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testGetAndPasswordUpdate() throws Exception
     {
         try
