@@ -30,7 +30,6 @@ import org.eclipse.jetty.client.util.BasicAuthentication;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.server.NetworkConnector;
 import org.eclipse.jetty.server.Server;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -47,7 +46,6 @@ public class TestSPIServer
      * bind before using.
      */
     @Test
-    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testUnboundHttpServer() throws Exception
     {
 
@@ -124,7 +122,6 @@ public class TestSPIServer
      * Test using a server that is created with a given InetSocketAddress
      */
     @Test
-    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testBoundHttpServer() throws Exception
     {
 

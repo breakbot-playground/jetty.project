@@ -41,7 +41,6 @@ import org.eclipse.jetty.util.security.Constraint;
 import org.eclipse.jetty.util.security.Credential;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -146,7 +145,6 @@ public class WebSocketServerExamplesTest
     }
 
     @Test
-    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testMyAuthedSocket() throws Exception
     {
         //HttpClient is configured for BasicAuthentication with the XmlHttpClientProvider

@@ -172,6 +172,7 @@ public interface Response
      * Asynchronous listener for the response content events.
      *
      * @see DemandedContentListener
+     * @deprecated Use {@link ContentSourceListener} instead.
      */
     @Deprecated
     interface AsyncContentListener extends DemandedContentListener
@@ -225,6 +226,7 @@ public interface Response
 
     /**
      * Asynchronous listener for the response content events.
+     * @deprecated Use {@link ContentSourceListener} instead.
      */
     @Deprecated
     interface DemandedContentListener extends ContentSourceListener
@@ -301,10 +303,18 @@ public interface Response
         }
     }
 
+    /**
+     * Asynchronous listener for the response content events.
+     */
     interface ContentSourceListener extends ResponseListener
     {
         /**
-         * This does not get called for interim statuses.
+         * Callback method invoked when all the response headers have been received and parsed.
+         * It is responsible for driving the {@code contentSource} instance with a read/demand loop.
+         * Note that this is not invoked for interim statuses.
+         *
+         * @param response the response containing the response line data and the headers
+         * @param contentSource the {@link Content.Source} that must be driven to read the data
          */
         void onContentSource(Response response, Content.Source contentSource);
     }

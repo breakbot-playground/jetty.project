@@ -151,7 +151,6 @@ public class HttpClientTransportOverHTTP2Test extends AbstractTest
     }
 
     @Test
-    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testResponseAbortSendsResetFrame() throws Exception
     {
         CountDownLatch resetLatch = new CountDownLatch(1);

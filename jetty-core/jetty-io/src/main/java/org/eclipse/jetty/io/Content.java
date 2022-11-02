@@ -541,6 +541,30 @@ public class Content
         }
 
         /**
+         * <p>Creates a chunk that is a slice of the given chunk.</p>
+         * <p>
+         *  The chunk slice has a byte buffer that is a slice of the original chunk's byte buffer, the last flag
+         *  copied over and the original chunk used as the retainable of the chunk slice.
+         *  Note that after this method returns, an extra Chunk instance refers to the same byte buffer,
+         *  so the original chunk is retained.
+         * </p>
+         * <p>Passing a null chunk returns null.</p>
+         * <p>Passing a terminal chunk returns it.</p>
+         *
+         * @param chunk the chunk to slice.
+         * @return the chunk slice.
+         */
+        static Chunk slice(Chunk chunk)
+        {
+            if (chunk == null)
+                return null;
+            if (chunk.isTerminal())
+                return chunk;
+            chunk.retain();
+            return Chunk.from(chunk.getByteBuffer().slice(), chunk.isLast(), chunk);
+        }
+
+        /**
          * @return the ByteBuffer of this Chunk
          */
         ByteBuffer getByteBuffer();

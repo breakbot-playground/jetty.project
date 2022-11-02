@@ -19,18 +19,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.awaitility.Awaitility;
 import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.api.Result;
 import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.server.Request;
-import org.hamcrest.Matchers;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ArgumentsSource;
 
 import static org.awaitility.Awaitility.await;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -100,7 +96,6 @@ public class HttpResponseConcurrentAbortTest extends AbstractHttpClientServerTes
 
     @ParameterizedTest
     @ArgumentsSource(ScenarioProvider.class)
-    @Disabled("TODO This test has 2+ listeners, that has to be reworked")
     public void testAbortOnContent(Scenario scenario) throws Exception
     {
         start(scenario, new EmptyServerHandler()
