@@ -16,7 +16,6 @@ package org.eclipse.jetty.client;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -64,7 +63,6 @@ public abstract class HttpReceiver
     private static final Logger LOG = LoggerFactory.getLogger(HttpReceiver.class);
 
     private final SerializedInvoker invoker = new SerializedInvoker();
-    private final ContentListeners contentListeners = new ContentListeners();
     private final HttpChannel channel;
     private ResponseState responseState = ResponseState.IDLE;
     private Content.Source contentSource;
@@ -422,7 +420,6 @@ public abstract class HttpReceiver
 
     private void cleanup()
     {
-        contentListeners.clear();
         contentSource = null;
         original = null;
     }
@@ -496,36 +493,6 @@ public abstract class HttpReceiver
          * The response is failed
          */
         FAILURE
-    }
-
-    /**
-     * <p>Wraps a list of content listeners, notifies them about content events and
-     * tracks individual listener demand to produce a global demand for content.</p>
-     */
-    private class ContentListeners
-    {
-        private final List<Response.ContentSourceListener> listeners = new ArrayList<>(1);
-
-        private void clear()
-        {
-            listeners.clear();
-        }
-
-        private void reset(List<Response.ResponseListener> responseListeners)
-        {
-            clear();
-            for (Response.ResponseListener listener : responseListeners)
-            {
-                if (listener instanceof Response.ContentSourceListener)
-                    listeners.add((Response.ContentSourceListener)listener);
-            }
-        }
-
-        private boolean isEmpty()
-        {
-            return listeners.isEmpty();
-        }
-
     }
 
     private static class DecodingContentSource extends ContentSourceTransformer
