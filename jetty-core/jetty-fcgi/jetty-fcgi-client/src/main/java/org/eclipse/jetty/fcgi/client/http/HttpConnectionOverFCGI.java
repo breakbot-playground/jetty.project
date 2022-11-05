@@ -153,17 +153,9 @@ public class HttpConnectionOverFCGI extends AbstractConnection implements IConne
     boolean parseAndFill()
     {
         if (LOG.isDebugEnabled())
-            LOG.debug("> parseAndFill");
+            LOG.debug("parseAndFill");
         if (networkBuffer == null)
             networkBuffer = newNetworkBuffer();
-        boolean idle = process();
-        if (LOG.isDebugEnabled())
-            LOG.debug("< parseAndFill");
-        return idle;
-    }
-
-    boolean process()
-    {
         EndPoint endPoint = getEndPoint();
         try
         {

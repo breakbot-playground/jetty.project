@@ -136,6 +136,11 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     }
 
     @Override
+    public void onEofConsumed()
+    {
+    }
+
+    @Override
     public void failAndClose(Throwable failure)
     {
         responseFailure(failure, Promise.from((failed) ->
@@ -143,11 +148,6 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
             if (failed)
                 getHttpConnection().close(failure);
         }, x -> getHttpConnection().close(failure)));
-    }
-
-    @Override
-    public void onEofConsumed()
-    {
     }
 
     @Override
