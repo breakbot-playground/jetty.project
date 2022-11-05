@@ -54,7 +54,6 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     private String method;
     private int status;
     private Content.Chunk chunk;
-    private ContentSource contentSource;
 
     public HttpReceiverOverHTTP(HttpChannelOverHTTP channel)
     {
@@ -71,146 +70,6 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     }
 
     @Override
-    protected void reset()
-    {
-        super.reset();
-        parser.reset();
-        contentSource = null;
-    }
-
-    @Override
-    protected void dispose()
-    {
-        super.dispose();
-        parser.close();
-        contentSource = null;
-    }
-
-    @Override
-    protected Content.Source newContentSource()
-    {
-        if (contentSource != null)
-            throw new IllegalStateException();
-        contentSource = new ContentSource();
-        return contentSource;
-    }
-
-    private class ContentSource implements Content.Source
-    {
-        private static final Logger LOG = LoggerFactory.getLogger(ContentSource.class);
-
-        private Content.Chunk currentChunk;
-        private Runnable demandCallback;
-
-        @Override
-        public Content.Chunk read()
-        {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Reading");
-            Content.Chunk chunk = consumeCurrentChunk();
-            if (chunk != null)
-                return chunk;
-            currentChunk = HttpReceiverOverHTTP.this.read(false);
-            return consumeCurrentChunk();
-        }
-
-        public void onDataAvailable()
-        {
-            if (LOG.isDebugEnabled())
-                LOG.debug("onDataAvailable, demandCallback: {}", demandCallback);
-            if (demandCallback != null)
-                invokeDemandCallback();
-        }
-
-        private Content.Chunk consumeCurrentChunk()
-        {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Consuming current chunk {}", currentChunk);
-            Content.Chunk chunk = currentChunk;
-            currentChunk = Content.Chunk.next(chunk);
-            return chunk;
-        }
-
-        @Override
-        public void demand(Runnable demandCallback)
-        {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Registering demand {}", demandCallback);
-            if (demandCallback == null)
-                throw new IllegalArgumentException();
-            if (this.demandCallback != null)
-                throw new IllegalStateException();
-            this.demandCallback = demandCallback;
-            meetDemand();
-        }
-
-        private void meetDemand()
-        {
-            while (true)
-            {
-                if (LOG.isDebugEnabled())
-                    LOG.debug("Trying to meet demand, current chunk: {}", currentChunk);
-                if (currentChunk != null)
-                {
-                    invokeDemandCallback();
-                    break;
-                }
-                else
-                {
-                    currentChunk = HttpReceiverOverHTTP.this.read(true);
-                    if (currentChunk == null)
-                        return;
-                }
-            }
-        }
-
-        private void invokeDemandCallback()
-        {
-            Runnable demandCallback = this.demandCallback;
-            this.demandCallback = null;
-            if (LOG.isDebugEnabled())
-                LOG.debug("Invoking demand callback {}", demandCallback);
-            if (demandCallback != null)
-            {
-                try
-                {
-                    demandCallback.run();
-                }
-                catch (Throwable x)
-                {
-                    fail(x);
-                }
-            }
-        }
-
-        @Override
-        public void fail(Throwable failure)
-        {
-            if (currentChunk != null)
-            {
-                currentChunk.release();
-                failAndClose(failure);
-            }
-            currentChunk = Content.Chunk.from(failure);
-        }
-    }
-
-    @Override
-    public HttpChannelOverHTTP getHttpChannel()
-    {
-        return (HttpChannelOverHTTP)super.getHttpChannel();
-    }
-
-    private HttpConnectionOverHTTP getHttpConnection()
-    {
-        return getHttpChannel().getHttpConnection();
-    }
-
-    protected ByteBuffer getResponseBuffer()
-    {
-        return networkBuffer == null ? null : networkBuffer.getBuffer();
-    }
-
     public void receive()
     {
         // This method is the callback of fill interest.
@@ -219,10 +78,11 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         // until onContentSource() gets called.
         // Once onContentSource() gets called, firstContent is true and it must just notify that content may be generated.
 
+        ContentSource contentSource = getContentSource();
         if (contentSource == null)
         {
             boolean setFillInterest = parseAndFill();
-            if (contentSource == null && setFillInterest)
+            if (getContentSource() == null && setFillInterest)
                 fillInterested();
         }
         else
@@ -232,7 +92,22 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         }
     }
 
-    private Content.Chunk read(boolean fillInterestIfNeeded)
+    @Override
+    protected void reset()
+    {
+        super.reset();
+        parser.reset();
+    }
+
+    @Override
+    protected void dispose()
+    {
+        super.dispose();
+        parser.close();
+    }
+
+    @Override
+    public Content.Chunk read(boolean fillInterestIfNeeded)
     {
         if (LOG.isDebugEnabled())
             LOG.debug("Reading, fillInterestIfNeeded={}", fillInterestIfNeeded);
@@ -258,6 +133,37 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         if (LOG.isDebugEnabled())
             LOG.debug("Receiver consuming chunk {}", chunk);
         return chunk;
+    }
+
+    @Override
+    public void failAndClose(Throwable failure)
+    {
+        responseFailure(failure, Promise.from((failed) ->
+        {
+            if (failed)
+                getHttpConnection().close(failure);
+        }, x -> getHttpConnection().close(failure)));
+    }
+
+    @Override
+    public void onEofConsumed()
+    {
+    }
+
+    @Override
+    public HttpChannelOverHTTP getHttpChannel()
+    {
+        return (HttpChannelOverHTTP)super.getHttpChannel();
+    }
+
+    private HttpConnectionOverHTTP getHttpConnection()
+    {
+        return getHttpChannel().getHttpConnection();
+    }
+
+    protected ByteBuffer getResponseBuffer()
+    {
+        return networkBuffer == null ? null : networkBuffer.getBuffer();
     }
 
     private void acquireNetworkBuffer()
@@ -539,7 +445,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         chunk = Content.Chunk.from(buffer, false, networkBuffer);
         if (LOG.isDebugEnabled())
             LOG.debug("Setting action to contentSource.onDataAvailable()");
-        if (actionRef.getAndSet(contentSource::onDataAvailable) != null)
+        if (actionRef.getAndSet(getContentSource()::onDataAvailable) != null)
             throw new IllegalStateException();
         return true;
     }
@@ -619,15 +525,6 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
             response.status(failure.getCode()).reason(failure.getReason());
             failAndClose(new HttpResponseException("HTTP protocol violation: bad response on " + getHttpConnection(), response, failure));
         }
-    }
-
-    private void failAndClose(Throwable failure)
-    {
-        responseFailure(failure, Promise.from((failed) ->
-        {
-            if (failed)
-                getHttpConnection().close(failure);
-        }, x -> getHttpConnection().close(failure)));
     }
 
     long getMessagesIn()

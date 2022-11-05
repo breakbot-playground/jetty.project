@@ -68,6 +68,7 @@ public abstract class HttpReceiver
     private final HttpChannel channel;
     private ResponseState responseState = ResponseState.IDLE;
     private Content.Source contentSource;
+    private ContentSource original;
     private Throwable failure;
 
     protected HttpReceiver(HttpChannel channel)
@@ -75,127 +76,18 @@ public abstract class HttpReceiver
         this.channel = channel;
     }
 
-    protected abstract Content.Source newContentSource();
+    protected ContentSource getContentSource()
+    {
+        return original;
+    }
 
     public abstract void receive();
 
-    private Content.Source createContentSource()
-    {
-        if (contentSource != null)
-            throw new IllegalStateException();
-        return new SerializingContentSource(newContentSource());
-    }
+    protected abstract Content.Chunk read(boolean fillInterestIfNeeded);
 
-    // TODO: create and use new Wrapper class in Content.Source.Wrapper.
-    private class SerializingContentSource implements Content.Source
-    {
-        private final Content.Source delegate;
+    protected abstract void onEofConsumed();
 
-        private SerializingContentSource(Content.Source delegate)
-        {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public long getLength()
-        {
-            return delegate.getLength();
-        }
-
-        @Override
-        public Content.Chunk read()
-        {
-            return delegate.read();
-        }
-
-        @Override
-        public void demand(Runnable demandCallback)
-        {
-            // We want to invoke the demandCallback serially with respect to any failure.
-            delegate.demand(() -> invoker.run(demandCallback));
-        }
-
-        @Override
-        public void fail(Throwable failure)
-        {
-            delegate.fail(failure);
-        }
-
-        @Override
-        public boolean rewind()
-        {
-            return delegate.rewind();
-        }
-    }
-
-    private static class DecodingContentSource extends ContentSourceTransformer
-    {
-        private static final Logger LOG = LoggerFactory.getLogger(DecodingContentSource.class);
-
-        private final ContentDecoder _decoder;
-        private volatile Content.Chunk _chunk;
-
-        public DecodingContentSource(Content.Source rawSource, ContentDecoder decoder)
-        {
-            super(rawSource);
-            _decoder = decoder;
-        }
-
-        @Override
-        protected Content.Chunk transform(Content.Chunk inputChunk)
-        {
-            while (true)
-            {
-                boolean retain = _chunk == null;
-                if (LOG.isDebugEnabled())
-                    LOG.debug("input: {}, chunk: {}, retain? {}", inputChunk, _chunk, retain);
-                if (_chunk == null)
-                    _chunk = inputChunk;
-                if (_chunk == null)
-                    return null;
-                if (_chunk instanceof Content.Chunk.Error)
-                    return _chunk;
-
-                // Retain the input chunk because its ByteBuffer will be referenced by the Inflater.
-                if (retain && _chunk.hasRemaining())
-                    _chunk.retain();
-                if (LOG.isDebugEnabled())
-                    LOG.debug("decoding: {}", _chunk);
-                ByteBuffer decodedBuffer = _decoder.decode(_chunk.getByteBuffer());
-                if (LOG.isDebugEnabled())
-                    LOG.debug("decoded: {}", BufferUtil.toDetailString(decodedBuffer));
-
-                if (BufferUtil.hasContent(decodedBuffer))
-                {
-                    // The decoded ByteBuffer is a transformed "copy" of the
-                    // compressed one, so it has its own reference counter.
-                    if (LOG.isDebugEnabled())
-                        LOG.debug("returning decoded content");
-                    return Content.Chunk.from(decodedBuffer, false, _decoder::release);
-                }
-                else
-                {
-                    if (LOG.isDebugEnabled())
-                        LOG.debug("decoding produced no content");
-
-                    if (!_chunk.hasRemaining())
-                    {
-                        Content.Chunk result = _chunk.isLast() ? Content.Chunk.EOF : null;
-                        if (LOG.isDebugEnabled())
-                            LOG.debug("Could not decode more from this chunk, releasing it, r={}", result);
-                        _chunk.release();
-                        _chunk = null;
-                        return result;
-                    }
-                    else
-                    {
-                        if (LOG.isDebugEnabled())
-                            LOG.debug("retrying transformation");
-                    }
-                }
-            }
-        }
-    }
+    protected abstract void failAndClose(Throwable failure);
 
     protected HttpChannel getHttpChannel()
     {
@@ -356,7 +248,9 @@ public abstract class HttpReceiver
             if (LOG.isDebugEnabled())
                 LOG.debug("Switching to CONTENT state");
             responseState = ResponseState.CONTENT;
-            contentSource = createContentSource();
+            if (original != null)
+                throw new IllegalStateException();
+            contentSource = original = new ContentSource(invoker, this);
 
             List<Response.ContentSourceListener> contentListeners = responseListeners.stream()
                     .filter(l -> l instanceof Response.ContentSourceListener)
@@ -530,6 +424,7 @@ public abstract class HttpReceiver
     {
         contentListeners.clear();
         contentSource = null;
+        original = null;
     }
 
     public void abort(HttpExchange exchange, Throwable failure, Promise<Boolean> promise)
@@ -631,5 +526,188 @@ public abstract class HttpReceiver
             return listeners.isEmpty();
         }
 
+    }
+
+    private static class DecodingContentSource extends ContentSourceTransformer
+    {
+        private static final Logger LOG = LoggerFactory.getLogger(DecodingContentSource.class);
+
+        private final ContentDecoder _decoder;
+        private volatile Content.Chunk _chunk;
+
+        public DecodingContentSource(Content.Source rawSource, ContentDecoder decoder)
+        {
+            super(rawSource);
+            _decoder = decoder;
+        }
+
+        @Override
+        protected Content.Chunk transform(Content.Chunk inputChunk)
+        {
+            while (true)
+            {
+                boolean retain = _chunk == null;
+                if (LOG.isDebugEnabled())
+                    LOG.debug("input: {}, chunk: {}, retain? {}", inputChunk, _chunk, retain);
+                if (_chunk == null)
+                    _chunk = inputChunk;
+                if (_chunk == null)
+                    return null;
+                if (_chunk instanceof Content.Chunk.Error)
+                    return _chunk;
+
+                // Retain the input chunk because its ByteBuffer will be referenced by the Inflater.
+                if (retain && _chunk.hasRemaining())
+                    _chunk.retain();
+                if (LOG.isDebugEnabled())
+                    LOG.debug("decoding: {}", _chunk);
+                ByteBuffer decodedBuffer = _decoder.decode(_chunk.getByteBuffer());
+                if (LOG.isDebugEnabled())
+                    LOG.debug("decoded: {}", BufferUtil.toDetailString(decodedBuffer));
+
+                if (BufferUtil.hasContent(decodedBuffer))
+                {
+                    // The decoded ByteBuffer is a transformed "copy" of the
+                    // compressed one, so it has its own reference counter.
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("returning decoded content");
+                    return Content.Chunk.from(decodedBuffer, false, _decoder::release);
+                }
+                else
+                {
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("decoding produced no content");
+
+                    if (!_chunk.hasRemaining())
+                    {
+                        Content.Chunk result = _chunk.isLast() ? Content.Chunk.EOF : null;
+                        if (LOG.isDebugEnabled())
+                            LOG.debug("Could not decode more from this chunk, releasing it, r={}", result);
+                        _chunk.release();
+                        _chunk = null;
+                        return result;
+                    }
+                    else
+                    {
+                        if (LOG.isDebugEnabled())
+                            LOG.debug("retrying transformation");
+                    }
+                }
+            }
+        }
+    }
+
+    protected static class ContentSource implements Content.Source
+    {
+        private static final Logger LOG = LoggerFactory.getLogger(ContentSource.class);
+
+        private final SerializedInvoker invoker;
+        private final HttpReceiver receiver;
+        private Content.Chunk currentChunk;
+        private Runnable demandCallback;
+        private boolean responseSucceeded;
+
+        public ContentSource(SerializedInvoker invoker, HttpReceiver receiver)
+        {
+            this.invoker = invoker;
+            this.receiver = receiver;
+        }
+
+        @Override
+        public Content.Chunk read()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Reading");
+            Content.Chunk chunk = consumeCurrentChunk();
+            if (chunk != null)
+                return chunk;
+            currentChunk = receiver.read(false);
+            return consumeCurrentChunk();
+        }
+
+        public void onDataAvailable()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("onDataAvailable, demandCallback: {}", demandCallback);
+            if (demandCallback != null)
+                invokeDemandCallback();
+        }
+
+        private Content.Chunk consumeCurrentChunk()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Consuming current chunk {}; end of stream reached? {}", currentChunk, responseSucceeded);
+            if (currentChunk == Content.Chunk.EOF && !responseSucceeded)
+            {
+                responseSucceeded = true;
+                receiver.onEofConsumed();
+            }
+            Content.Chunk chunk = currentChunk;
+            currentChunk = Content.Chunk.next(chunk);
+            return chunk;
+        }
+
+        @Override
+        public void demand(Runnable demandCallback)
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Registering demand {}", demandCallback);
+            if (demandCallback == null)
+                throw new IllegalArgumentException();
+            if (this.demandCallback != null)
+                throw new IllegalStateException();
+            this.demandCallback = demandCallback;
+            meetDemand();
+        }
+
+        private void meetDemand()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Trying to meet demand, current chunk: {}", currentChunk);
+            while (true)
+            {
+                if (currentChunk != null)
+                {
+                    invokeDemandCallback();
+                    break;
+                }
+                else
+                {
+                    currentChunk = receiver.read(true);
+                    if (currentChunk == null)
+                        return;
+                }
+            }
+        }
+
+        private void invokeDemandCallback()
+        {
+            Runnable demandCallback = this.demandCallback;
+            this.demandCallback = null;
+            if (LOG.isDebugEnabled())
+                LOG.debug("Invoking demand callback {}", demandCallback);
+            if (demandCallback != null)
+            {
+                try
+                {
+                    invoker.run(demandCallback);
+                }
+                catch (Throwable x)
+                {
+                    fail(x);
+                }
+            }
+        }
+
+        @Override
+        public void fail(Throwable failure)
+        {
+            if (currentChunk != null)
+            {
+                currentChunk.release();
+                receiver.failAndClose(failure);
+            }
+            currentChunk = Content.Chunk.from(failure);
+        }
     }
 }

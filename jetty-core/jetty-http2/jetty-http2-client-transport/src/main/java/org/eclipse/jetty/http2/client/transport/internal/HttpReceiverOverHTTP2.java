@@ -48,32 +48,9 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpReceiverOverHTTP2.class);
 
-    private ContentSource contentSource;
-
     public HttpReceiverOverHTTP2(HttpChannel channel)
     {
         super(channel);
-    }
-
-    @Override
-    protected void reset()
-    {
-        super.reset();
-        contentSource = null;
-    }
-
-    @Override
-    protected void dispose()
-    {
-        super.dispose();
-        contentSource = null;
-    }
-
-    @Override
-    protected Content.Source newContentSource()
-    {
-        contentSource = new ContentSource();
-        return contentSource;
     }
 
     @Override
@@ -82,144 +59,50 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
         onDataAvailable();
     }
 
-    private class ContentSource implements Content.Source
+    @Override
+    public Content.Chunk read(boolean fillInterestIfNeeded)
     {
-        private static final Logger LOG = LoggerFactory.getLogger(ContentSource.class);
-
-        private Content.Chunk currentChunk;
-        private Runnable demandCallback;
-        private boolean responseSucceeded;
-
-        @Override
-        public Content.Chunk read()
+        if (LOG.isDebugEnabled())
+            LOG.debug("Reading, fillInterestIfNeeded={}", fillInterestIfNeeded);
+        Stream stream = getHttpChannel().getStream();
+        Stream.Data data = stream.readData();
+        if (LOG.isDebugEnabled())
+            LOG.debug("Read stream data {}", data);
+        if (data == null)
         {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Reading");
-            Content.Chunk chunk = consumeCurrentChunk();
-            if (chunk != null)
-                return chunk;
-            currentChunk = read(false);
-            return consumeCurrentChunk();
+            if (fillInterestIfNeeded)
+                stream.demand();
+            return null;
         }
-
-        private Content.Chunk read(boolean fillInterestIfNeeded)
+        DataFrame frame = data.frame();
+        if (frame.isEndStream() && frame.remaining() == 0)
         {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Reading, fillInterestIfNeeded={}", fillInterestIfNeeded);
-            Stream stream = getHttpChannel().getStream();
-            Stream.Data data = stream.readData();
-            if (LOG.isDebugEnabled())
-                LOG.debug("Read stream data {}", data);
-            if (data == null)
-            {
-                if (fillInterestIfNeeded)
-                    stream.demand();
-                return null;
-            }
-            DataFrame frame = data.frame();
-            if (frame.isEndStream() && frame.remaining() == 0)
-            {
-                data.release();
-                return Content.Chunk.EOF;
-            }
-            return Content.Chunk.from(frame.getData(), false, data);
+            data.release();
+            return Content.Chunk.EOF;
         }
+        return Content.Chunk.from(frame.getData(), false, data);
+    }
 
-        public void onDataAvailable()
-        {
-            if (LOG.isDebugEnabled())
-                LOG.debug("onDataAvailable, demandCallback: {}", demandCallback);
-            Runnable demandCallback = this.demandCallback;
-            this.demandCallback = null;
-            if (demandCallback != null)
-            {
-                try
-                {
-                    demandCallback.run();
-                }
-                catch (Throwable x)
-                {
-                    fail(x);
-                }
-            }
-        }
+    @Override
+    public void onEofConsumed()
+    {
+        responseSuccess(getHttpExchange());
+    }
 
-        private Content.Chunk consumeCurrentChunk()
+    @Override
+    public void failAndClose(Throwable failure)
+    {
+        // TODO cancel or close or both? rework failure handling.
+        Stream stream = getHttpChannel().getStream();
+        responseFailure(failure, Promise.from(failed ->
         {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Consuming current chunk {}; end of stream reached? {}", currentChunk, responseSucceeded);
-            if (currentChunk == Content.Chunk.EOF && !responseSucceeded)
-            {
-                responseSucceeded = true;
-                responseSuccess(getHttpExchange());
-            }
-            Content.Chunk chunk = currentChunk;
-            currentChunk = Content.Chunk.next(chunk);
-            return chunk;
-        }
-
-        @Override
-        public void demand(Runnable demandCallback)
+            stream.reset(new ResetFrame(stream.getId(), ErrorCode.CANCEL_STREAM_ERROR.code), Callback.NOOP);
+            getHttpChannel().getHttpConnection().close(failure);
+        }, x ->
         {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Registering demand {}", demandCallback);
-            if (demandCallback == null)
-                throw new IllegalArgumentException();
-            if (this.demandCallback != null)
-                throw new IllegalStateException();
-            this.demandCallback = demandCallback;
-            meetDemand();
-        }
-
-        private void meetDemand()
-        {
-            if (LOG.isDebugEnabled())
-                LOG.debug("Trying to meet demand, current chunk: {}", currentChunk);
-            while (true)
-            {
-                if (currentChunk != null)
-                {
-                    invokeDemandCallback();
-                    break;
-                }
-                else
-                {
-                    currentChunk = read(true);
-                    if (currentChunk == null)
-                        return;
-                }
-            }
-        }
-
-        private void invokeDemandCallback()
-        {
-            Runnable demandCallback = this.demandCallback;
-            this.demandCallback = null;
-            if (LOG.isDebugEnabled())
-                LOG.debug("Invoking demand callback {}", demandCallback);
-            if (demandCallback != null)
-            {
-                try
-                {
-                    demandCallback.run();
-                }
-                catch (Throwable x)
-                {
-                    fail(x);
-                }
-            }
-        }
-
-        @Override
-        public void fail(Throwable failure)
-        {
-            if (currentChunk != null)
-            {
-                currentChunk.release();
-                failAndClose(failure);
-            }
-            currentChunk = Content.Chunk.from(failure);
-        }
+            stream.reset(new ResetFrame(stream.getId(), ErrorCode.CANCEL_STREAM_ERROR.code), Callback.NOOP);
+            getHttpChannel().getHttpConnection().close(failure);
+        }));
     }
 
     @Override
@@ -335,22 +218,7 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
         if (exchange == null)
             return;
 
-        contentSource.onDataAvailable();
-    }
-
-    private void failAndClose(Throwable failure)
-    {
-        // TODO cancel or close or both? rework failure handling.
-        Stream stream = getHttpChannel().getStream();
-        responseFailure(failure, Promise.from(failed ->
-        {
-            stream.reset(new ResetFrame(stream.getId(), ErrorCode.CANCEL_STREAM_ERROR.code), Callback.NOOP);
-            getHttpChannel().getHttpConnection().close(failure);
-        }, x ->
-        {
-            stream.reset(new ResetFrame(stream.getId(), ErrorCode.CANCEL_STREAM_ERROR.code), Callback.NOOP);
-            getHttpChannel().getHttpConnection().close(failure);
-        }));
+        getContentSource().onDataAvailable();
     }
 
     void onReset(ResetFrame frame)
