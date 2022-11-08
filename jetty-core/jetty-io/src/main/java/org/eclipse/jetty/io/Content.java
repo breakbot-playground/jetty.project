@@ -556,9 +556,7 @@ public class Content
          */
         static Chunk slice(Chunk chunk)
         {
-            if (chunk == null)
-                return null;
-            if (chunk.isTerminal())
+            if (chunk == null || chunk.isTerminal())
                 return chunk;
             chunk.retain();
             return Chunk.from(chunk.getByteBuffer().slice(), chunk.isLast(), chunk);
