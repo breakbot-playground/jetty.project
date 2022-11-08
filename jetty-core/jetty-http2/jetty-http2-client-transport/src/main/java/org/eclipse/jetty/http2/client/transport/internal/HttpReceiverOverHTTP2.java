@@ -80,7 +80,6 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
     @Override
     public void failAndClose(Throwable failure)
     {
-        // TODO cancel or close or both? rework failure handling.
         Stream stream = getHttpChannel().getStream();
         responseFailure(failure, Promise.from(failed ->
         {
