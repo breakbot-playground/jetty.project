@@ -14,9 +14,11 @@
 package org.eclipse.jetty.client;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
@@ -25,6 +27,7 @@ import org.eclipse.jetty.client.api.Result;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.io.content.ByteBufferContentSource;
+import org.eclipse.jetty.util.thread.AutoLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -125,16 +128,15 @@ public class ResponseNotifier
         }
     }
 
-    // TODO this class may need some form of thread-safety, but for now it is assumed the MultiplexerContentSource
-    //  instances run strictly in sequence.
     private static class Multiplexer
     {
         private static final Logger LOG = LoggerFactory.getLogger(Multiplexer.class);
 
         private final Content.Source originalContentSource;
         private final MultiplexerContentSource[] multiplexerContentSources;
-        private final Runnable[] demandCallbacks;
-        private final Content.Chunk[] chunks;
+        private final Executor executor = Executors.newCachedThreadPool(); // TODO inject!
+        private final AutoLock lock = new AutoLock();
+        private boolean demanded;
 
         private Multiplexer(Content.Source originalContentSource, int size)
         {
@@ -147,8 +149,6 @@ public class ResponseNotifier
             {
                 multiplexerContentSources[i] = new MultiplexerContentSource(i);
             }
-            demandCallbacks = new Runnable[size];
-            chunks = new Content.Chunk[size];
             if (LOG.isDebugEnabled())
                 LOG.debug("Using multiplexer with a size of {}", size);
         }
@@ -160,27 +160,29 @@ public class ResponseNotifier
 
         private void demandIfAllRead()
         {
-            boolean allRead = true;
-            for (Content.Chunk chunk : chunks)
+            boolean demandNow = false;
+            try (AutoLock ignore = lock.lock())
             {
-                allRead &= chunk instanceof TombChunk;
-            }
-
-            if (allRead)
-            {
-                if (LOG.isDebugEnabled())
-                    LOG.debug("All {} content sources read the current chunk, demanding", multiplexerContentSources.length);
-                for (Runnable demandCallback : demandCallbacks)
+                boolean allRead = true;
+                for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
                 {
-                    if (demandCallback != null)
+                    Content.Chunk chunk = multiplexerContentSource.chunk;
+                    if (!(chunk instanceof AlreadyReadChunk))
                     {
-                        if (LOG.isDebugEnabled())
-                            LOG.debug("Demand has been registered by a multiplexed content source, demanding on the original content source");
-                        originalContentSource.demand(this::onDemandCallback);
+                        allRead = false;
                         break;
                     }
                 }
+
+                if (allRead && !demanded)
+                {
+                    demandNow = demanded = true;
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("All {} content sources read the current chunk, demanding", multiplexerContentSources.length);
+                }
             }
+            if (demandNow)
+                originalContentSource.demand(this::onDemandCallback);
         }
 
         private void onDemandCallback()
@@ -188,80 +190,61 @@ public class ResponseNotifier
             if (LOG.isDebugEnabled())
                 LOG.debug("Original content source's demand calling back");
 
-            Arrays.fill(chunks, null);
-            Runnable[] demandCallbacksCopy = Arrays.copyOf(demandCallbacks, demandCallbacks.length);
-            Arrays.fill(demandCallbacks, null);
-
-            for (int i = 0; i < demandCallbacksCopy.length; i++)
+            Content.Chunk chunk = originalContentSource.read();
+            Runnable[] demandCallbacks = new Runnable[multiplexerContentSources.length];
+            for (int i = 0; i < multiplexerContentSources.length; i++)
             {
-                Runnable demandCallback = demandCallbacksCopy[i];
+                demandCallbacks[i] = multiplexerContentSources[i].demandCallback;
+                multiplexerContentSources[i].demandCallback = null;
+                multiplexerContentSources[i].chunk = Content.Chunk.slice(chunk);
+            }
+            try (AutoLock ignore = lock.lock())
+            {
+                demanded = false;
+            }
+
+            for (int i = 0; i < demandCallbacks.length; i++)
+            {
+                Runnable demandCallback = demandCallbacks[i];
                 if (LOG.isDebugEnabled())
                     LOG.debug("Content source #{} registered callback {}", i, demandCallback);
-                if (demandCallback != null)
+                executor.execute(demandCallback);
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Executed content source #{}'s callback", i);
+            }
+        }
+
+        private void registerDemand()
+        {
+            boolean demandNow = false;
+            try (AutoLock ignore = lock.lock())
+            {
+                boolean allDemanded = true;
+                for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
                 {
-                    demandCallback.run();
+                    if (multiplexerContentSource.demandCallback == null)
+                    {
+                        allDemanded = false;
+                        break;
+                    }
+                }
+
+                if (allDemanded && !demanded)
+                {
+                    demandNow = demanded = true;
                     if (LOG.isDebugEnabled())
-                        LOG.debug("Called content source #{}'s callback", i);
+                        LOG.debug("All {} content sources demanded, demanding", multiplexerContentSources.length);
                 }
             }
-        }
-
-        Content.Chunk readCurrentChunk(int index)
-        {
-            if (chunks[index] instanceof TombChunk)
-            {
-                if (LOG.isDebugEnabled())
-                    LOG.debug("Content source #{} already read current chunk", index);
-                return null;
-            }
-
-            Content.Chunk result;
-            if (chunks[index] == null)
-            {
-                if (LOG.isDebugEnabled())
-                    LOG.debug("Current chunk is null, reading a new one from the original content source");
-                Content.Chunk chunk = originalContentSource.read();
-                for (int i = 0; i < chunks.length; i++)
-                {
-                    chunks[i] = Content.Chunk.slice(chunk);
-                }
-                result = chunks[index];
-            }
-            else
-            {
-                result = chunks[index];
-                demandIfAllRead();
-            }
-
-            chunks[index] = TombChunk.INSTANCE;
-            if (LOG.isDebugEnabled())
-                LOG.debug("Content source #{} read current chunk: {}", index, result);
-            return result;
-        }
-
-        void registerDemand(int index, Runnable demandCallback)
-        {
-            if (demandCallbacks[index] != null)
-                throw new IllegalStateException();
-            demandCallbacks[index] = demandCallback;
-
-            boolean allDemanded = true;
-            for (Runnable demand : demandCallbacks)
-            {
-                allDemanded &= demand != null;
-            }
-
-            if (allDemanded)
-            {
-                if (LOG.isDebugEnabled())
-                    LOG.debug("All {} content sources demanded, demanding", multiplexerContentSources.length);
+            if (demandNow)
                 originalContentSource.demand(this::onDemandCallback);
-            }
         }
 
         private class MultiplexerContentSource implements Content.Source
         {
             private final int index;
+            private volatile Runnable demandCallback;
+            private volatile Content.Chunk chunk;
 
             private MultiplexerContentSource(int index)
             {
@@ -271,13 +254,28 @@ public class ResponseNotifier
             @Override
             public Content.Chunk read()
             {
-                return readCurrentChunk(index);
+                demandIfAllRead();
+                if (chunk instanceof AlreadyReadChunk)
+                {
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("Content source #{} already read current chunk", index);
+                    return null;
+                }
+
+                Content.Chunk result = chunk;
+                chunk = AlreadyReadChunk.INSTANCE;
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Content source #{} read current chunk: {}", index, result);
+                return result;
             }
 
             @Override
             public void demand(Runnable demandCallback)
             {
-                registerDemand(index, demandCallback);
+                if (this.demandCallback != null)
+                    throw new IllegalStateException();
+                this.demandCallback = Objects.requireNonNull(demandCallback);
+                registerDemand();
             }
 
             @Override
@@ -287,9 +285,9 @@ public class ResponseNotifier
             }
         }
 
-        private static class TombChunk implements Content.Chunk
+        private static class AlreadyReadChunk implements Content.Chunk
         {
-            static TombChunk INSTANCE = new TombChunk();
+            static AlreadyReadChunk INSTANCE = new AlreadyReadChunk();
 
             @Override
             public ByteBuffer getByteBuffer()
