@@ -71,7 +71,7 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
         DataFrame frame = data.frame();
         Runnable releaser = !frame.isEndStream() ? data::release : () ->
         {
-            responseSuccess(getHttpExchange());
+            responseSuccess(getHttpExchange(), null);
             data.release();
         };
         return Content.Chunk.from(frame.getData(), frame.isEndStream(), releaser);

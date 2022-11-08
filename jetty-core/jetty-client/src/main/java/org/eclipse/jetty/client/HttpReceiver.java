@@ -46,7 +46,7 @@ import org.slf4j.LoggerFactory;
  * is available</li>
  * <li>{@link #responseHeader(HttpExchange, HttpField)}, when an HTTP field is available</li>
  * <li>{@link #responseHeaders(HttpExchange)}, when all HTTP headers are available</li>
- * <li>{@link #responseSuccess(HttpExchange)}, when the response is successful</li>
+ * <li>{@link #responseSuccess(HttpExchange, Runnable)}, when the response is successful</li>
  * </ol>
  * At any time, subclasses may invoke {@link #responseFailure(Throwable, Promise)} to indicate that the response has failed
  * (for example, because of I/O exceptions).
@@ -307,13 +307,9 @@ public abstract class HttpReceiver
      * {@link org.eclipse.jetty.client.api.Response.CompleteListener}s (if the exchange is completed).
      *
      * @param exchange the HTTP exchange
+     * @param task an optional task to invoke afterwards
      */
-    protected void responseSuccess(HttpExchange exchange)
-    {
-        responseSuccess(exchange, null);
-    }
-
-    protected void responseSuccess(HttpExchange exchange, Runnable r)
+    protected void responseSuccess(HttpExchange exchange, Runnable task)
     {
         invoker.run(() ->
         {
@@ -342,7 +338,7 @@ public abstract class HttpReceiver
             // Mark atomically the response as terminated, with
             // respect to concurrency between request and response.
             terminateResponse(exchange);
-        }, r);
+        }, task);
     }
 
     /**

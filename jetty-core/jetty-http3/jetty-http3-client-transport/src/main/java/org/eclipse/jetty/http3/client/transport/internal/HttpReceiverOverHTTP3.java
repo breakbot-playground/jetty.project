@@ -52,7 +52,7 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
         }
         Runnable releaser = !data.isLast() ? data::release : () ->
         {
-            responseSuccess(getHttpExchange());
+            responseSuccess(getHttpExchange(), null);
             data.release();
         };
         return Content.Chunk.from(data.getByteBuffer(), data.isLast(), releaser);
@@ -117,7 +117,7 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
         HttpFields trailers = frame.getMetaData().getFields();
         trailers.forEach(exchange.getResponse()::trailer);
 
-        responseSuccess(exchange);
+        responseSuccess(exchange, null);
     }
 
     @Override
