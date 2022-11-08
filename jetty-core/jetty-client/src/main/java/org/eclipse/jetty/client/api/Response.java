@@ -172,7 +172,7 @@ public interface Response
      * Asynchronous listener for the response content events.
      *
      * @see DemandedContentListener
-     * @deprecated Use {@link ContentSourceListener} instead.
+     * @deprecated Use {@link SimpleContentSourceListener} instead.
      */
     @Deprecated
     interface AsyncContentListener extends DemandedContentListener

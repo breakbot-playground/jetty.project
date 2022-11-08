@@ -69,8 +69,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         retainableByteBufferPool = httpClient.getByteBufferPool().asRetainableByteBufferPool();
     }
 
-    @Override
-    public void receive()
+    void receive()
     {
         if (!hasContent())
         {
@@ -80,7 +79,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         }
         else
         {
-            super.receive();
+            responseContentAvailable();
         }
     }
 
@@ -432,7 +431,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         chunk = Content.Chunk.from(buffer, false, networkBuffer);
         if (LOG.isDebugEnabled())
             LOG.debug("Setting action to contentSource.onDataAvailable()");
-        if (actionRef.getAndSet(super::receive) != null)
+        if (actionRef.getAndSet(this::responseContentAvailable) != null)
             throw new IllegalStateException();
         return true;
     }

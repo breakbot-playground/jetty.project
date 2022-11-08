@@ -29,8 +29,7 @@ public class HttpReceiverOverFCGI extends HttpReceiver
         super(channel);
     }
 
-    @Override
-    public void receive()
+    void receive()
     {
         if (!hasContent())
         {
@@ -41,7 +40,7 @@ public class HttpReceiverOverFCGI extends HttpReceiver
         }
         else
         {
-            super.receive();
+            responseContentAvailable();
         }
     }
 
@@ -84,7 +83,7 @@ public class HttpReceiverOverFCGI extends HttpReceiver
             throw new IllegalStateException();
         this.chunk = chunk;
 
-        super.receive();
+        responseContentAvailable();
     }
 
     void end(HttpExchange exchange)

@@ -210,7 +210,7 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
         if (exchange == null)
             return;
 
-        receive();
+        responseContentAvailable();
     }
 
     void onReset(ResetFrame frame)

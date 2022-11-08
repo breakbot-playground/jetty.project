@@ -74,14 +74,6 @@ public abstract class HttpReceiver
     }
 
     /**
-     * Callback method to invoke when data arrives to get it processed.
-     */
-    protected void receive()
-    {
-        contentSource.onDataAvailable();
-    }
-
-    /**
      * Read a chunk of data. If no data was read, null is returned and if fillInterestIfNeeded
      * is true then fill interest is registered.
      * The returned chunk of data may be the last one or an error exactly like
@@ -255,7 +247,7 @@ public abstract class HttpReceiver
             {
                 if (LOG.isDebugEnabled())
                     LOG.debug("Interim response status {}, succeeding", response.getStatus());
-                responseSuccess(exchange, this::receive);
+                responseSuccess(exchange, this::responseContentAvailable);
                 return;
             }
 
@@ -295,21 +287,28 @@ public abstract class HttpReceiver
         });
     }
 
+    /**
+     * Method to be invoked when response content is available, i.e.: ready to be read.
+     * <p>
+     * This method takes care of ensuring the {@link Content.Source} passed to
+     * {@link Response.ContentSourceListener#onContentSource(Response, Content.Source)} calls the
+     * demand callback.
+     */
     protected void responseContentAvailable()
     {
-
+        contentSource.onDataAvailable();
     }
 
     /**
      * Method to be invoked when the response is successful.
      * <p>
-     * This method takes case of notifying {@link org.eclipse.jetty.client.api.Response.SuccessListener}s and possibly
+     * This method takes care of notifying {@link org.eclipse.jetty.client.api.Response.SuccessListener}s and possibly
      * {@link org.eclipse.jetty.client.api.Response.CompleteListener}s (if the exchange is completed).
      *
      * @param exchange the HTTP exchange
-     * @param task an optional task to invoke afterwards
+     * @param afterSuccessTask an optional task to invoke afterwards
      */
-    protected void responseSuccess(HttpExchange exchange, Runnable task)
+    protected void responseSuccess(HttpExchange exchange, Runnable afterSuccessTask)
     {
         invoker.run(() ->
         {
@@ -338,7 +337,7 @@ public abstract class HttpReceiver
             // Mark atomically the response as terminated, with
             // respect to concurrency between request and response.
             terminateResponse(exchange);
-        }, task);
+        }, afterSuccessTask);
     }
 
     /**
