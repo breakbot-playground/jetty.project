@@ -80,8 +80,6 @@ public abstract class HttpReceiver
 
     protected abstract Content.Chunk read(boolean fillInterestIfNeeded);
 
-    protected abstract void onEofConsumed();
-
     protected abstract void failAndClose(Throwable failure);
 
     protected HttpChannel getHttpChannel()
@@ -589,7 +587,6 @@ public abstract class HttpReceiver
 
         private Content.Chunk currentChunk;
         private Runnable demandCallback;
-        private boolean responseSucceeded;
 
         @Override
         public Content.Chunk read()
@@ -615,12 +612,7 @@ public abstract class HttpReceiver
         private Content.Chunk consumeCurrentChunk()
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Consuming current chunk {}; end of stream reached? {}", currentChunk, responseSucceeded);
-            if (currentChunk == Content.Chunk.EOF && !responseSucceeded)
-            {
-                responseSucceeded = true;
-                HttpReceiver.this.onEofConsumed();
-            }
+                LOG.debug("Consuming current chunk {}", currentChunk);
             Content.Chunk chunk = currentChunk;
             currentChunk = Content.Chunk.next(chunk);
             return chunk;
@@ -636,13 +628,13 @@ public abstract class HttpReceiver
             if (this.demandCallback != null)
                 throw new IllegalStateException();
             this.demandCallback = demandCallback;
-            meetDemand();
+            processDemand();
         }
 
-        private void meetDemand()
+        private void processDemand()
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Trying to meet demand, current chunk: {}", currentChunk);
+                LOG.debug("Processing demand, current chunk: {}", currentChunk);
             while (true)
             {
                 if (currentChunk != null)

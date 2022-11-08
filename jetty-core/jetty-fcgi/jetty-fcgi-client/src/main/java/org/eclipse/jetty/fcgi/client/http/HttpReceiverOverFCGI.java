@@ -69,11 +69,6 @@ public class HttpReceiverOverFCGI extends HttpReceiver
     }
 
     @Override
-    public void onEofConsumed()
-    {
-    }
-
-    @Override
     public void failAndClose(Throwable failure)
     {
         responseFailure(failure, Promise.from(failed ->

@@ -50,18 +50,12 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
                 stream.demand();
             return null;
         }
-        if (data.isLast() && !data.getByteBuffer().hasRemaining())
+        Runnable releaser = !data.isLast() ? data::release : () ->
         {
+            responseSuccess(getHttpExchange());
             data.release();
-            return Content.Chunk.EOF;
-        }
-        return Content.Chunk.from(data.getByteBuffer(), false, data);
-    }
-
-    @Override
-    public void onEofConsumed()
-    {
-        responseSuccess(getHttpExchange());
+        };
+        return Content.Chunk.from(data.getByteBuffer(), data.isLast(), releaser);
     }
 
     @Override
