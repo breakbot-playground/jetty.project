@@ -26,6 +26,7 @@ import org.eclipse.jetty.client.HttpResponse;
 import org.eclipse.jetty.client.HttpResponseException;
 import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.HttpField;
+import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpParser;
 import org.eclipse.jetty.http.HttpStatus;
@@ -407,7 +408,8 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         getHttpConnection().onResponseHeaders(exchange);
         if (LOG.isDebugEnabled())
             LOG.debug("Setting action to responseHeaders(exchange)");
-        if (actionRef.getAndSet(() -> responseHeaders(exchange, false)) != null)
+        long contentLength = exchange.getRequest().getHeaders().getLongField(HttpHeader.CONTENT_LENGTH);
+        if (actionRef.getAndSet(() -> responseHeaders(exchange, contentLength == 0L)) != null)
             throw new IllegalStateException();
         return true;
     }

@@ -24,6 +24,7 @@ import org.eclipse.jetty.fcgi.generator.Flusher;
 import org.eclipse.jetty.fcgi.generator.Generator;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.io.IdleTimeout;
@@ -121,7 +122,10 @@ public class HttpChannelOverFCGI extends HttpChannel
         idle.notIdle();
         HttpExchange exchange = getHttpExchange();
         if (exchange != null)
-            receiver.responseHeaders(exchange, false);
+        {
+            long contentLength = exchange.getRequest().getHeaders().getLongField(HttpHeader.CONTENT_LENGTH);
+            receiver.responseHeaders(exchange, contentLength == 0L);
+        }
     }
 
     protected void content(Content.Chunk chunk)

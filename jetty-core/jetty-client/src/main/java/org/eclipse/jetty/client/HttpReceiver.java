@@ -225,9 +225,9 @@ public abstract class HttpReceiver
      * This method takes case of notifying {@link org.eclipse.jetty.client.api.Response.HeadersListener}s.
      *
      * @param exchange the HTTP exchange
-     * @param last true if the request ends after the headers, false if content or trailer may follow
+     * @param noContent true if the request ends after the headers, false if content or trailer may follow
      */
-    protected void responseHeaders(HttpExchange exchange, boolean last)
+    protected void responseHeaders(HttpExchange exchange, boolean noContent)
     {
         invoker.run(() ->
         {
@@ -251,6 +251,8 @@ public abstract class HttpReceiver
                 responseSuccess(exchange, this::responseContentAvailable);
                 return;
             }
+
+            // TODO skip the following if noContent is true
 
             if (LOG.isDebugEnabled())
                 LOG.debug("Switching to CONTENT state");
