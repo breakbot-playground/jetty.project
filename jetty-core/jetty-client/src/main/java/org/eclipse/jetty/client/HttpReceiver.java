@@ -296,7 +296,13 @@ public abstract class HttpReceiver
      */
     protected void responseContentAvailable()
     {
-        contentSource.onDataAvailable();
+        invoker.run(() ->
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("responseContentAvailable");
+
+            contentSource.onDataAvailable();
+        });
     }
 
     /**
@@ -672,7 +678,9 @@ public abstract class HttpReceiver
             {
                 try
                 {
-                    invoker.run(demandCallback);
+                    // There is no need to use the invoker here as long as
+                    // onDataAvailable() is always called by the invoker.
+                    demandCallback.run();
                 }
                 catch (Throwable x)
                 {
