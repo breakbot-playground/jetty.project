@@ -36,6 +36,7 @@ import org.eclipse.jetty.io.MappedByteBufferPool;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.util.NanoTime;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -182,11 +183,11 @@ public class HttpClientDemandTest extends AbstractTest
         // Demand all the rest.
         demand = demandQueue.poll();
         assertNotNull(demand);
-        long before = System.nanoTime();
+        long begin = NanoTime.now();
         // Spin on demand until content.length bytes have been read.
         while (content.length > sum(contentQueue))
         {
-            if (System.nanoTime() - before > TimeUnit.SECONDS.toNanos(5L))
+            if (NanoTime.millisSince(begin) > 5000L)
                 fail("Failed to demand all content");
             demand.accept(1);
         }
