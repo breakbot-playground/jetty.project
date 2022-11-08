@@ -36,12 +36,6 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
     }
 
     @Override
-    public void receive()
-    {
-        onDataAvailable(null);
-    }
-
-    @Override
     public Content.Chunk read(boolean fillInterestIfNeeded)
     {
         if (LOG.isDebugEnabled())
@@ -116,9 +110,7 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
         if (exchange == null)
             return;
 
-        ContentSource contentSource = getContentSource();
-        if (contentSource != null)
-            contentSource.onDataAvailable();
+        receive();
     }
 
     @Override

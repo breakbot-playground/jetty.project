@@ -54,12 +54,6 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
     }
 
     @Override
-    public void receive()
-    {
-        onDataAvailable();
-    }
-
-    @Override
     public Content.Chunk read(boolean fillInterestIfNeeded)
     {
         if (LOG.isDebugEnabled())
@@ -218,7 +212,7 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
         if (exchange == null)
             return;
 
-        getContentSource().onDataAvailable();
+        receive();
     }
 
     void onReset(ResetFrame frame)

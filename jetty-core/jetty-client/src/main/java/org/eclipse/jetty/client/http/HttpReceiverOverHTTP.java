@@ -72,23 +72,15 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     @Override
     public void receive()
     {
-        // This method is the callback of fill interest.
-        // As such, it is called repeatedly until the ContentSourceListener.onContentSource() loop gets started;
-        // meaning firstContent is false and it must register for fill interest if no filling was done
-        // until onContentSource() gets called.
-        // Once onContentSource() gets called, firstContent is true and it must just notify that content may be generated.
-
-        ContentSource contentSource = getContentSource();
-        if (contentSource == null)
+        if (!isContent())
         {
             boolean setFillInterest = parseAndFill();
-            if (getContentSource() == null && setFillInterest)
+            if (!isContent() && setFillInterest)
                 fillInterested();
         }
         else
         {
-            // This calls the demand callback of the onContentSource loop.
-            contentSource.onDataAvailable();
+            super.receive();
         }
     }
 
@@ -445,7 +437,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         chunk = Content.Chunk.from(buffer, false, networkBuffer);
         if (LOG.isDebugEnabled())
             LOG.debug("Setting action to contentSource.onDataAvailable()");
-        if (actionRef.getAndSet(getContentSource()::onDataAvailable) != null)
+        if (actionRef.getAndSet(super::receive) != null)
             throw new IllegalStateException();
         return true;
     }

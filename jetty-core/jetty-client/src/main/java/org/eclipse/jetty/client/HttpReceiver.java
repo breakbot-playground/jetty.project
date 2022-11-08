@@ -65,8 +65,7 @@ public abstract class HttpReceiver
     private final SerializedInvoker invoker = new SerializedInvoker();
     private final HttpChannel channel;
     private ResponseState responseState = ResponseState.IDLE;
-    private Content.Source contentSource;
-    private ContentSource original;
+    private NotifiableContentSource contentSource;
     private Throwable failure;
 
     protected HttpReceiver(HttpChannel channel)
@@ -74,12 +73,10 @@ public abstract class HttpReceiver
         this.channel = channel;
     }
 
-    protected ContentSource getContentSource()
+    public void receive()
     {
-        return original;
+        contentSource.onDataAvailable();
     }
-
-    public abstract void receive();
 
     protected abstract Content.Chunk read(boolean fillInterestIfNeeded);
 
@@ -105,6 +102,11 @@ public abstract class HttpReceiver
     public boolean isFailed()
     {
         return responseState == ResponseState.FAILURE;
+    }
+
+    public boolean isContent()
+    {
+        return responseState == ResponseState.CONTENT;
     }
 
     /**
@@ -246,9 +248,9 @@ public abstract class HttpReceiver
             if (LOG.isDebugEnabled())
                 LOG.debug("Switching to CONTENT state");
             responseState = ResponseState.CONTENT;
-            if (original != null)
+            if (contentSource != null)
                 throw new IllegalStateException();
-            contentSource = original = new ContentSource(invoker, this);
+            contentSource = new ContentSource();
 
             List<Response.ContentSourceListener> contentListeners = responseListeners.stream()
                     .filter(l -> l instanceof Response.ContentSourceListener)
@@ -277,6 +279,11 @@ public abstract class HttpReceiver
 
             notifier.notifyContent(response, contentSource, contentListeners);
         });
+    }
+
+    protected void responseContentAvailable()
+    {
+
     }
 
     /**
@@ -421,7 +428,6 @@ public abstract class HttpReceiver
     private void cleanup()
     {
         contentSource = null;
-        original = null;
     }
 
     public void abort(HttpExchange exchange, Throwable failure, Promise<Boolean> promise)
@@ -495,17 +501,30 @@ public abstract class HttpReceiver
         FAILURE
     }
 
-    private static class DecodingContentSource extends ContentSourceTransformer
+    private interface NotifiableContentSource extends Content.Source
+    {
+        void onDataAvailable();
+    }
+
+    private static class DecodingContentSource extends ContentSourceTransformer implements NotifiableContentSource
     {
         private static final Logger LOG = LoggerFactory.getLogger(DecodingContentSource.class);
 
+        private final NotifiableContentSource _rawSource;
         private final ContentDecoder _decoder;
-        private volatile Content.Chunk _chunk;
+        private Content.Chunk _chunk;
 
-        public DecodingContentSource(Content.Source rawSource, ContentDecoder decoder)
+        public DecodingContentSource(NotifiableContentSource rawSource, ContentDecoder decoder)
         {
             super(rawSource);
+            _rawSource = rawSource;
             _decoder = decoder;
+        }
+
+        @Override
+        public void onDataAvailable()
+        {
+            _rawSource.onDataAvailable();
         }
 
         @Override
@@ -564,21 +583,13 @@ public abstract class HttpReceiver
         }
     }
 
-    protected static class ContentSource implements Content.Source
+    private class ContentSource implements NotifiableContentSource
     {
         private static final Logger LOG = LoggerFactory.getLogger(ContentSource.class);
 
-        private final SerializedInvoker invoker;
-        private final HttpReceiver receiver;
         private Content.Chunk currentChunk;
         private Runnable demandCallback;
         private boolean responseSucceeded;
-
-        public ContentSource(SerializedInvoker invoker, HttpReceiver receiver)
-        {
-            this.invoker = invoker;
-            this.receiver = receiver;
-        }
 
         @Override
         public Content.Chunk read()
@@ -588,10 +599,11 @@ public abstract class HttpReceiver
             Content.Chunk chunk = consumeCurrentChunk();
             if (chunk != null)
                 return chunk;
-            currentChunk = receiver.read(false);
+            currentChunk = HttpReceiver.this.read(false);
             return consumeCurrentChunk();
         }
 
+        @Override
         public void onDataAvailable()
         {
             if (LOG.isDebugEnabled())
@@ -607,7 +619,7 @@ public abstract class HttpReceiver
             if (currentChunk == Content.Chunk.EOF && !responseSucceeded)
             {
                 responseSucceeded = true;
-                receiver.onEofConsumed();
+                HttpReceiver.this.onEofConsumed();
             }
             Content.Chunk chunk = currentChunk;
             currentChunk = Content.Chunk.next(chunk);
@@ -640,7 +652,7 @@ public abstract class HttpReceiver
                 }
                 else
                 {
-                    currentChunk = receiver.read(true);
+                    currentChunk = HttpReceiver.this.read(true);
                     if (currentChunk == null)
                         return;
                 }
@@ -672,7 +684,7 @@ public abstract class HttpReceiver
             if (currentChunk != null)
             {
                 currentChunk.release();
-                receiver.failAndClose(failure);
+                HttpReceiver.this.failAndClose(failure);
             }
             currentChunk = Content.Chunk.from(failure);
         }

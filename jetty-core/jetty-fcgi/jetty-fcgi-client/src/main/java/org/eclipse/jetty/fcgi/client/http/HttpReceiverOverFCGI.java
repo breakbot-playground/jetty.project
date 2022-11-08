@@ -32,17 +32,16 @@ public class HttpReceiverOverFCGI extends HttpReceiver
     @Override
     public void receive()
     {
-        ContentSource contentSource = getContentSource();
-        if (getContentSource() == null)
+        if (!isContent())
         {
             HttpConnectionOverFCGI httpConnection = getHttpChannel().getHttpConnection();
             boolean setFillInterest = httpConnection.parseAndFill();
-            if (getContentSource() == null && setFillInterest)
+            if (!isContent() && setFillInterest)
                 httpConnection.fillInterested();
         }
         else
         {
-            contentSource.onDataAvailable();
+            super.receive();
         }
     }
 
@@ -89,7 +88,8 @@ public class HttpReceiverOverFCGI extends HttpReceiver
         if (this.chunk != null)
             throw new IllegalStateException();
         this.chunk = chunk;
-        getContentSource().onDataAvailable();
+
+        super.receive();
     }
 
     void end(HttpExchange exchange)
