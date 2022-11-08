@@ -146,7 +146,7 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
                 upgrade(upgrader, httpResponse, endPoint);
         }
 
-        responseHeaders(exchange);
+        responseHeaders(exchange, frame.isEndStream());
     }
 
     private void onTrailer(HeadersFrame frame)

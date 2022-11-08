@@ -121,7 +121,7 @@ public class HttpChannelOverFCGI extends HttpChannel
         idle.notIdle();
         HttpExchange exchange = getHttpExchange();
         if (exchange != null)
-            receiver.responseHeaders(exchange);
+            receiver.responseHeaders(exchange, false);
     }
 
     protected void content(Content.Chunk chunk)

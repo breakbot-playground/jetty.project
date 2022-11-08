@@ -407,7 +407,7 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
         getHttpConnection().onResponseHeaders(exchange);
         if (LOG.isDebugEnabled())
             LOG.debug("Setting action to responseHeaders(exchange)");
-        if (actionRef.getAndSet(() -> responseHeaders(exchange)) != null)
+        if (actionRef.getAndSet(() -> responseHeaders(exchange, false)) != null)
             throw new IllegalStateException();
         return true;
     }

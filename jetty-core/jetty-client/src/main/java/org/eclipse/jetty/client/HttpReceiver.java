@@ -45,7 +45,7 @@ import org.slf4j.LoggerFactory;
  * <li>{@link #responseBegin(HttpExchange)}, when the HTTP response data containing the HTTP status code
  * is available</li>
  * <li>{@link #responseHeader(HttpExchange, HttpField)}, when an HTTP field is available</li>
- * <li>{@link #responseHeaders(HttpExchange)}, when all HTTP headers are available</li>
+ * <li>{@link #responseHeaders(HttpExchange, boolean)}, when all HTTP headers are available</li>
  * <li>{@link #responseSuccess(HttpExchange, Runnable)}, when the response is successful</li>
  * </ol>
  * At any time, subclasses may invoke {@link #responseFailure(Throwable, Promise)} to indicate that the response has failed
@@ -225,8 +225,9 @@ public abstract class HttpReceiver
      * This method takes case of notifying {@link org.eclipse.jetty.client.api.Response.HeadersListener}s.
      *
      * @param exchange the HTTP exchange
+     * @param last true if the request ends after the headers, false if content or trailer may follow
      */
-    protected void responseHeaders(HttpExchange exchange)
+    protected void responseHeaders(HttpExchange exchange, boolean last)
     {
         invoker.run(() ->
         {

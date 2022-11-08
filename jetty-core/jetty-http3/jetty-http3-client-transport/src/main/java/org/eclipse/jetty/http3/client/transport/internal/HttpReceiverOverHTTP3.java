@@ -96,7 +96,7 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
 
         // TODO: add support for HttpMethod.CONNECT.
 
-        responseHeaders(exchange);
+        responseHeaders(exchange, frame.isLast());
     }
 
     @Override
