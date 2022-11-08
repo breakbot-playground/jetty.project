@@ -48,12 +48,12 @@ public class SerializedInvoker
         if (task == null)
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Offering task null, skipping it");
+                LOG.debug("Offering task null, skipping it in {}", this);
             return null;
         }
         Link link = new Link(task);
         if (LOG.isDebugEnabled())
-            LOG.debug("Offering task {} wrapped in link {}", task, link);
+            LOG.debug("Offering task {} wrapped in link {} of {}", task, link, this);
         Link penultimate = _tail.getAndSet(link);
         if (penultimate == null)
             return link;
@@ -88,18 +88,18 @@ public class SerializedInvoker
     public void run(Runnable task)
     {
         if (LOG.isDebugEnabled())
-            LOG.debug("Running task {}", task);
+            LOG.debug("Running task {} of {}", task, this);
         Runnable todo = offer(task);
         if (todo != null)
         {
             todo.run();
             if (LOG.isDebugEnabled())
-                LOG.debug("Executed {}", todo);
+                LOG.debug("Executed {} of {}", todo, this);
         }
         else
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Task was queued");
+                LOG.debug("Task was queued in {}", this);
         }
     }
 
@@ -111,18 +111,18 @@ public class SerializedInvoker
     public void run(Runnable... tasks)
     {
         if (LOG.isDebugEnabled())
-            LOG.debug("Running tasks {}", Arrays.toString(tasks));
+            LOG.debug("Running tasks {} of {}", Arrays.toString(tasks), this);
         Runnable todo = offer(tasks);
         if (todo != null)
         {
             todo.run();
             if (LOG.isDebugEnabled())
-                LOG.debug("Executed {}", todo);
+                LOG.debug("Executed {} of {}", todo, this);
         }
         else
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Tasks were queued");
+                LOG.debug("Tasks were queued in {}", this);
         }
     }
 
@@ -133,8 +133,6 @@ public class SerializedInvoker
 
     private class Link implements Runnable, Invocable
     {
-        private static final Logger LOG = LoggerFactory.getLogger(Link.class);
-
         private final Runnable _task;
         private final AtomicReference<Link> _next = new AtomicReference<>();
 
@@ -172,7 +170,7 @@ public class SerializedInvoker
             while (link != null)
             {
                 if (LOG.isDebugEnabled())
-                    LOG.debug("Running link {} containing task {}", link, link._task);
+                    LOG.debug("Running link {} containing task {} of {}", link, link._task, SerializedInvoker.this);
                 try
                 {
                     link._task.run();
@@ -180,12 +178,12 @@ public class SerializedInvoker
                 catch (Throwable t)
                 {
                     if (LOG.isDebugEnabled())
-                        LOG.debug("Failed while running link {} containing task {}", link, _task, t);
+                        LOG.debug("Failed while running link {} containing task {} of {}", link, _task, SerializedInvoker.this, t);
                     onError(link._task, t);
                 }
                 link = link.next();
                 if (link == null && LOG.isDebugEnabled())
-                    LOG.debug("Next link is null, execution is over");
+                    LOG.debug("Next link is null, execution is over, in {}", SerializedInvoker.this);
             }
         }
 
