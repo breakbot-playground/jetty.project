@@ -83,10 +83,15 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
         httpResponse.version(response.getHttpVersion()).status(response.getStatus()).reason(response.getReason());
 
         responseBegin(exchange);
+        if (exchange.isResponseComplete())
+            return;
+
         HttpFields headers = response.getFields();
         for (HttpField header : headers)
         {
             responseHeader(exchange, header);
+            if (exchange.isResponseComplete())
+                return;
         }
 
         // TODO: add support for HttpMethod.CONNECT.
