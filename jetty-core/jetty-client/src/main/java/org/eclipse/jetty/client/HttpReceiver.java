@@ -73,13 +73,28 @@ public abstract class HttpReceiver
         this.channel = channel;
     }
 
-    public void receive()
+    /**
+     * Callback method to invoke when data arrives to get it processed.
+     */
+    protected void receive()
     {
         contentSource.onDataAvailable();
     }
 
+    /**
+     * Read a chunk of data. If no data was read, null is returned and if fillInterestIfNeeded
+     * is true then fill interest is registered.
+     * The returned chunk of data may be the last one or an error exactly like
+     * {@link Content.Source#read()} allows.
+     * @param fillInterestIfNeeded true to register for fill interest when no data was read.
+     * @return the chunk of data that was read, null if there was none.
+     */
     protected abstract Content.Chunk read(boolean fillInterestIfNeeded);
 
+    /**
+     * Fail the receiver and close the underlying connection.
+     * @param failure the failure.
+     */
     protected abstract void failAndClose(Throwable failure);
 
     protected HttpChannel getHttpChannel()
@@ -102,9 +117,9 @@ public abstract class HttpReceiver
         return responseState == ResponseState.FAILURE;
     }
 
-    public boolean isContent()
+    protected boolean hasContent()
     {
-        return responseState == ResponseState.CONTENT;
+        return contentSource != null;
     }
 
     /**
@@ -207,7 +222,8 @@ public abstract class HttpReceiver
         }
         catch (IOException x)
         {
-            if (LOG.isDebugEnabled()) LOG.debug("Unable to store cookies {} from {}", field, uri, x);
+            if (LOG.isDebugEnabled())
+                LOG.debug("Unable to store cookies {} from {}", field, uri, x);
         }
     }
 

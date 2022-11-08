@@ -32,11 +32,11 @@ public class HttpReceiverOverFCGI extends HttpReceiver
     @Override
     public void receive()
     {
-        if (!isContent())
+        if (!hasContent())
         {
             HttpConnectionOverFCGI httpConnection = getHttpChannel().getHttpConnection();
             boolean setFillInterest = httpConnection.parseAndFill();
-            if (!isContent() && setFillInterest)
+            if (!hasContent() && setFillInterest)
                 httpConnection.fillInterested();
         }
         else

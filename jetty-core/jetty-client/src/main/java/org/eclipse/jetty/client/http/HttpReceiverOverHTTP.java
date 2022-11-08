@@ -72,10 +72,10 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     @Override
     public void receive()
     {
-        if (!isContent())
+        if (!hasContent())
         {
             boolean setFillInterest = parseAndFill();
-            if (!isContent() && setFillInterest)
+            if (!hasContent() && setFillInterest)
                 fillInterested();
         }
         else
