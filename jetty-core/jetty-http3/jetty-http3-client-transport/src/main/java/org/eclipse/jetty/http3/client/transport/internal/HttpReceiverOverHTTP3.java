@@ -13,6 +13,8 @@
 
 package org.eclipse.jetty.http3.client.transport.internal;
 
+import java.nio.ByteBuffer;
+
 import org.eclipse.jetty.client.HttpExchange;
 import org.eclipse.jetty.client.HttpReceiver;
 import org.eclipse.jetty.client.HttpResponse;
@@ -30,9 +32,18 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpReceiverOverHTTP3.class);
 
+    private boolean responseSucceeded;
+
     protected HttpReceiverOverHTTP3(HttpChannelOverHTTP3 channel)
     {
         super(channel);
+    }
+
+    @Override
+    protected void reset()
+    {
+        super.reset();
+        responseSucceeded = false;
     }
 
     @Override
@@ -50,12 +61,14 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
                 stream.demand();
             return null;
         }
-        Runnable releaser = !data.isLast() ? data::release : () ->
+        ByteBuffer byteBuffer = data.getByteBuffer();
+        boolean last = !byteBuffer.hasRemaining() && data.isLast();
+        if (last && !responseSucceeded)
         {
+            responseSucceeded = true;
             responseSuccess(getHttpExchange(), null);
-            data.release();
-        };
-        return Content.Chunk.from(data.getByteBuffer(), data.isLast(), releaser);
+        }
+        return Content.Chunk.from(byteBuffer, last, data);
     }
 
     @Override

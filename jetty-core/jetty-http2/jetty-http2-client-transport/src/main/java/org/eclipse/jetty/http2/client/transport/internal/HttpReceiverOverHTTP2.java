@@ -48,9 +48,18 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpReceiverOverHTTP2.class);
 
+    private boolean responseSucceeded;
+
     public HttpReceiverOverHTTP2(HttpChannel channel)
     {
         super(channel);
+    }
+
+    @Override
+    protected void reset()
+    {
+        super.reset();
+        responseSucceeded = false;
     }
 
     @Override
@@ -69,12 +78,13 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
             return null;
         }
         DataFrame frame = data.frame();
-        Runnable releaser = !frame.isEndStream() ? data::release : () ->
+        boolean last = frame.remaining() == 0 && frame.isEndStream();
+        if (last && !responseSucceeded)
         {
+            responseSucceeded = true;
             responseSuccess(getHttpExchange(), null);
-            data.release();
-        };
-        return Content.Chunk.from(frame.getData(), frame.isEndStream(), releaser);
+        }
+        return Content.Chunk.from(frame.getData(), last, data);
     }
 
     @Override
