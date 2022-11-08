@@ -125,12 +125,12 @@ public class HttpResponseConcurrentAbortTest extends AbstractHttpClientServerTes
             @Override
             public void run()
             {
-                response.abort(new Exception()).whenComplete((failed, x) ->
+                response.abort(new Exception()).whenComplete((aborted, x) ->
                 {
                     if (x != null)
                         abortResult.set(x);
                     else
-                        abortResult.set(failed);
+                        abortResult.set(aborted);
                 });
             }
         }.start();
