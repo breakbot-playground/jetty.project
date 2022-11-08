@@ -14,6 +14,7 @@
 package org.eclipse.jetty.client;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
@@ -28,6 +29,13 @@ import org.eclipse.jetty.http.HttpStatus;
 public class ProcessingProtocolHandler implements ProtocolHandler
 {
     public static final String NAME = "processing";
+
+    private final Executor executor;
+
+    public ProcessingProtocolHandler(Executor executor)
+    {
+        this.executor = executor;
+    }
 
     @Override
     public String getName()
@@ -53,7 +61,7 @@ public class ProcessingProtocolHandler implements ProtocolHandler
 
     private class ProcessingListener extends BufferingResponseListener
     {
-        private final ResponseNotifier notifier = new ResponseNotifier();
+        private final ResponseNotifier notifier = new ResponseNotifier(executor);
 
         @Override
         public void onSuccess(Response response)

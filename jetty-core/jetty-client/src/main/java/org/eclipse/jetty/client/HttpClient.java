@@ -224,13 +224,13 @@ public class HttpClient extends ContainerLifeCycle
         if (resolver == null)
             setSocketAddressResolver(new SocketAddressResolver.Async(getExecutor(), scheduler, getAddressResolutionTimeout()));
 
-        handlers.put(new ContinueProtocolHandler());
-        handlers.put(new ProcessingProtocolHandler());
-        handlers.put(new EarlyHintsProtocolHandler());
+        handlers.put(new ContinueProtocolHandler(executor));
+        handlers.put(new ProcessingProtocolHandler(executor));
+        handlers.put(new EarlyHintsProtocolHandler(executor));
         handlers.put(new RedirectProtocolHandler(this));
         handlers.put(new WWWAuthenticationProtocolHandler(this));
         handlers.put(new ProxyAuthenticationProtocolHandler(this));
-        handlers.put(new UpgradeProtocolHandler());
+        handlers.put(new UpgradeProtocolHandler(executor));
 
         decoderFactories.add(new GZIPContentDecoder.Factory(byteBufferPool));
 

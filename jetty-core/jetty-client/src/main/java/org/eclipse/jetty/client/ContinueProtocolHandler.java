@@ -14,6 +14,7 @@
 package org.eclipse.jetty.client;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
@@ -33,9 +34,9 @@ public class ContinueProtocolHandler implements ProtocolHandler
 
     private final ResponseNotifier notifier;
 
-    public ContinueProtocolHandler()
+    public ContinueProtocolHandler(Executor executor)
     {
-        this.notifier = new ResponseNotifier();
+        this.notifier = new ResponseNotifier(executor);
     }
 
     @Override

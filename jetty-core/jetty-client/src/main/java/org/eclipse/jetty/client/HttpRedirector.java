@@ -75,7 +75,7 @@ public class HttpRedirector
     public HttpRedirector(HttpClient client)
     {
         this.client = client;
-        this.notifier = new ResponseNotifier();
+        this.notifier = new ResponseNotifier(client.getExecutor());
     }
 
     /**

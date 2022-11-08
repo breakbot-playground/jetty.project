@@ -18,7 +18,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
@@ -34,6 +33,13 @@ import org.slf4j.LoggerFactory;
 public class ResponseNotifier
 {
     private static final Logger LOG = LoggerFactory.getLogger(ResponseNotifier.class);
+
+    private final Executor executor;
+
+    public ResponseNotifier(Executor executor)
+    {
+        this.executor = executor;
+    }
 
     public void notifyBegin(List<Response.ResponseListener> listeners, Response response)
     {
@@ -128,13 +134,12 @@ public class ResponseNotifier
         }
     }
 
-    private static class Multiplexer
+    private class Multiplexer
     {
         private static final Logger LOG = LoggerFactory.getLogger(Multiplexer.class);
 
         private final Content.Source originalContentSource;
         private final MultiplexerContentSource[] multiplexerContentSources;
-        private final Executor executor = Executors.newCachedThreadPool(); // TODO inject!
         private final AutoLock lock = new AutoLock();
         private boolean demanded;
 

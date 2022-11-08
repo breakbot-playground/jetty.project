@@ -332,7 +332,7 @@ public abstract class AbstractProxyServlet extends HttpServlet
             // Pass traffic to the client, only intercept what's necessary.
             ProtocolHandlers protocolHandlers = client.getProtocolHandlers();
             protocolHandlers.clear();
-            protocolHandlers.put(new ProxyContinueProtocolHandler());
+            protocolHandlers.put(new ProxyContinueProtocolHandler(client.getExecutor()));
 
             return client;
         }
@@ -852,6 +852,11 @@ public abstract class AbstractProxyServlet extends HttpServlet
 
     class ProxyContinueProtocolHandler extends ContinueProtocolHandler
     {
+        ProxyContinueProtocolHandler(Executor executor)
+        {
+            super(executor);
+        }
+
         @Override
         protected void onContinue(Request request)
         {

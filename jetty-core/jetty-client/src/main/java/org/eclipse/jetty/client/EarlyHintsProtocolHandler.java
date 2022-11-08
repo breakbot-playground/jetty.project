@@ -14,6 +14,7 @@
 package org.eclipse.jetty.client;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
@@ -28,6 +29,13 @@ import org.eclipse.jetty.http.HttpStatus;
 public class EarlyHintsProtocolHandler implements ProtocolHandler
 {
     public static final String NAME = "early-hints";
+
+    private final Executor executor;
+
+    public EarlyHintsProtocolHandler(Executor executor)
+    {
+        this.executor = executor;
+    }
 
     @Override
     public String getName()
@@ -53,7 +61,7 @@ public class EarlyHintsProtocolHandler implements ProtocolHandler
 
     private class EarlyHintsListener extends BufferingResponseListener
     {
-        private final ResponseNotifier notifier = new ResponseNotifier();
+        private final ResponseNotifier notifier = new ResponseNotifier(executor);
 
         @Override
         public void onSuccess(Response response)

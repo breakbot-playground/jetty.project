@@ -416,7 +416,7 @@ public class HttpClientContinueTest extends AbstractTest
         });
 
         client.getProtocolHandlers().clear();
-        client.getProtocolHandlers().put(new ContinueProtocolHandler()
+        client.getProtocolHandlers().put(new ContinueProtocolHandler(client.getExecutor())
         {
             @Override
             public Response.Listener getResponseListener()
@@ -640,7 +640,7 @@ public class HttpClientContinueTest extends AbstractTest
 
         AsyncRequestContent content = new AsyncRequestContent(ByteBuffer.wrap(chunk1));
 
-        client.getProtocolHandlers().put(new ContinueProtocolHandler()
+        client.getProtocolHandlers().put(new ContinueProtocolHandler(client.getExecutor())
         {
             @Override
             public Response.Listener getResponseListener()

@@ -53,7 +53,7 @@ public abstract class AuthenticationProtocolHandler implements ProtocolHandler
     {
         this.client = client;
         this.maxContentLength = maxContentLength;
-        this.notifier = new ResponseNotifier();
+        this.notifier = new ResponseNotifier(client.getExecutor());
     }
 
     protected HttpClient getHttpClient()

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -172,9 +173,10 @@ public abstract class ProxyHandler extends Handler.Processor
         httpClient.getContentDecoderFactories().clear();
         ProtocolHandlers protocolHandlers = httpClient.getProtocolHandlers();
         protocolHandlers.clear();
-        protocolHandlers.put(new ProxyContinueProtocolHandler());
-        protocolHandlers.put(new ProxyProcessingProtocolHandler());
-        protocolHandlers.put(new ProxyEarlyHintsProtocolHandler());
+        Executor executor = httpClient.getExecutor();
+        protocolHandlers.put(new ProxyContinueProtocolHandler(executor));
+        protocolHandlers.put(new ProxyProcessingProtocolHandler(executor));
+        protocolHandlers.put(new ProxyEarlyHintsProtocolHandler(executor));
         return httpClient;
     }
 
@@ -793,6 +795,11 @@ public abstract class ProxyHandler extends Handler.Processor
 
     private class ProxyContinueProtocolHandler extends ContinueProtocolHandler
     {
+        private ProxyContinueProtocolHandler(Executor executor)
+        {
+            super(executor);
+        }
+
         @Override
         protected void onContinue(org.eclipse.jetty.client.api.Request proxyToServerRequest)
         {
@@ -806,6 +813,11 @@ public abstract class ProxyHandler extends Handler.Processor
 
     private class ProxyProcessingProtocolHandler extends ProcessingProtocolHandler
     {
+        private ProxyProcessingProtocolHandler(Executor executor)
+        {
+            super(executor);
+        }
+
         @Override
         protected void onProcessing(org.eclipse.jetty.client.api.Request proxyToServerRequest, HttpFields serverToProxyResponseHeaders)
         {
@@ -820,6 +832,11 @@ public abstract class ProxyHandler extends Handler.Processor
 
     private class ProxyEarlyHintsProtocolHandler extends EarlyHintsProtocolHandler
     {
+        private ProxyEarlyHintsProtocolHandler(Executor executor)
+        {
+            super(executor);
+        }
+
         @Override
         protected void onEarlyHints(org.eclipse.jetty.client.api.Request proxyToServerRequest, HttpFields serverToProxyResponseHeaders)
         {

@@ -14,6 +14,7 @@
 package org.eclipse.jetty.client;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
@@ -30,6 +31,13 @@ import org.eclipse.jetty.util.Callback;
 public class UpgradeProtocolHandler implements ProtocolHandler
 {
     private final List<String> protocols = List.of("websocket", "h2c");
+
+    private final Executor executor;
+
+    public UpgradeProtocolHandler(Executor executor)
+    {
+        this.executor = executor;
+    }
 
     @Override
     public String getName()
@@ -98,7 +106,7 @@ public class UpgradeProtocolHandler implements ProtocolHandler
         HttpConversation conversation = request.getConversation();
         conversation.updateResponseListeners(null);
         List<Response.ResponseListener> responseListeners = conversation.getResponseListeners();
-        ResponseNotifier notifier = new ResponseNotifier();
+        ResponseNotifier notifier = new ResponseNotifier(executor);
         notifier.forwardFailure(responseListeners, response, responseFailure);
         notifier.notifyComplete(responseListeners, new Result(request, requestFailure, response, responseFailure));
     }
