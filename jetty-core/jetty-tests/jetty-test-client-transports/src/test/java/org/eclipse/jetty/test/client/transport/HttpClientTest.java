@@ -1011,7 +1011,7 @@ public class HttpClientTest extends AbstractTest
         }
     }
 
-    private static abstract class CompleteContentSourceListener implements Response.CompleteListener, Response.ContentSourceListener
+    private abstract static class CompleteContentSourceListener implements Response.CompleteListener, Response.ContentSourceListener
     {
         private final CountDownLatch latch = new CountDownLatch(1);
         private Result result;
