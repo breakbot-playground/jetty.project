@@ -56,6 +56,11 @@ public class HttpReceiverOverHTTP2 extends HttpReceiver implements HTTP2Channel.
     }
 
     @Override
+    protected void onInterim()
+    {
+    }
+
+    @Override
     protected void reset()
     {
         super.reset();

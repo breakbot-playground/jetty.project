@@ -40,6 +40,11 @@ public class HttpReceiverOverHTTP3 extends HttpReceiver implements Stream.Client
     }
 
     @Override
+    protected void onInterim()
+    {
+    }
+
+    @Override
     protected void reset()
     {
         super.reset();

@@ -85,6 +85,12 @@ public class HttpReceiverOverHTTP extends HttpReceiver implements HttpParser.Res
     }
 
     @Override
+    protected void onInterim()
+    {
+        receive();
+    }
+
+    @Override
     protected void reset()
     {
         super.reset();

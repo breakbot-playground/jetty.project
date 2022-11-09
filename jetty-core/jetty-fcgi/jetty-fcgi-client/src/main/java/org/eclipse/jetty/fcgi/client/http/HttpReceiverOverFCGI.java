@@ -45,6 +45,12 @@ public class HttpReceiverOverFCGI extends HttpReceiver
     }
 
     @Override
+    public void onInterim()
+    {
+        receive();
+    }
+
+    @Override
     public Content.Chunk read(boolean fillInterestIfNeeded)
     {
         Content.Chunk chunk = consumeChunk();

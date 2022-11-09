@@ -84,6 +84,11 @@ public abstract class HttpReceiver
     protected abstract Content.Chunk read(boolean fillInterestIfNeeded);
 
     /**
+     * Prepare for the next step after an interim response was read.
+     */
+    protected abstract void onInterim();
+
+    /**
      * Fail the receiver and close the underlying connection.
      * @param failure the failure.
      */
@@ -248,7 +253,7 @@ public abstract class HttpReceiver
             {
                 if (LOG.isDebugEnabled())
                     LOG.debug("Interim response status {}, succeeding", response.getStatus());
-                responseSuccess(exchange, this::responseContentAvailable);
+                responseSuccess(exchange, this::onInterim);
                 return;
             }
 
