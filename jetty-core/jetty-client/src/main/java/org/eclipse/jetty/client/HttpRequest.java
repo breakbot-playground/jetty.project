@@ -52,6 +52,7 @@ import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpVersion;
+import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.Fields;
 import org.eclipse.jetty.util.NanoTime;
@@ -616,6 +617,20 @@ public class HttpRequest implements Request
             public void onComplete(Result result)
             {
                 listener.onComplete(result);
+            }
+        });
+        return this;
+    }
+
+    @Override
+    public Request onContentSource(Response.ContentSourceListener listener)
+    {
+        this.responseListeners.add(new Response.ContentSourceListener()
+        {
+            @Override
+            public void onContentSource(Response response, org.eclipse.jetty.io.Content.Source contentSource)
+            {
+                listener.onContentSource(response, contentSource);
             }
         });
         return this;

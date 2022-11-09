@@ -427,6 +427,12 @@ public interface Request
     Request onComplete(Response.CompleteListener listener);
 
     /**
+     * @param listener a listener for driving {@link org.eclipse.jetty.io.Content.Source}
+     * @return this request object
+     */
+    Request onContentSource(Response.ContentSourceListener listener);
+
+    /**
      * Sends this request and returns the response.
      * <p>
      * This method should be used when a simple blocking semantic is needed, and when it is known

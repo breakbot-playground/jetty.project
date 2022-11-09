@@ -688,10 +688,9 @@ public abstract class HttpReceiver
         public void fail(Throwable failure)
         {
             if (currentChunk != null)
-            {
                 currentChunk.release();
+            if (currentChunk == null || !(currentChunk instanceof Content.Chunk.Error))
                 HttpReceiver.this.failAndClose(failure);
-            }
             currentChunk = Content.Chunk.from(failure);
         }
     }

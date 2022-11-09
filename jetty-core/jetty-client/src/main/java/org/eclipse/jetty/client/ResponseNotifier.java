@@ -26,7 +26,7 @@ import org.eclipse.jetty.client.api.Result;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.io.content.ByteBufferContentSource;
-import org.eclipse.jetty.util.thread.AutoLock;
+import org.eclipse.jetty.util.AtomicBiInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -140,8 +140,7 @@ public class ResponseNotifier
 
         private final Content.Source originalContentSource;
         private final MultiplexerContentSource[] multiplexerContentSources;
-        private final AutoLock lock = new AutoLock();
-        private boolean demanded;
+        private final AtomicBiInteger counters = new AtomicBiInteger(); // HI = failures; LO = demands
 
         private Multiplexer(Content.Source originalContentSource, int size)
         {
@@ -163,86 +162,54 @@ public class ResponseNotifier
             return multiplexerContentSources[index];
         }
 
-        private void demandIfAllRead()
-        {
-            boolean demandNow = false;
-            try (AutoLock ignore = lock.lock())
-            {
-                boolean allRead = true;
-                for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
-                {
-                    Content.Chunk chunk = multiplexerContentSource.chunk;
-                    if (!(chunk instanceof AlreadyReadChunk))
-                    {
-                        allRead = false;
-                        break;
-                    }
-                }
-
-                if (allRead && !demanded)
-                {
-                    demandNow = demanded = true;
-                    if (LOG.isDebugEnabled())
-                        LOG.debug("All {} content sources read the current chunk, demanding", multiplexerContentSources.length);
-                }
-            }
-            if (demandNow)
-                originalContentSource.demand(this::onDemandCallback);
-        }
-
         private void onDemandCallback()
         {
             if (LOG.isDebugEnabled())
                 LOG.debug("Original content source's demand calling back");
 
             Content.Chunk chunk = originalContentSource.read();
-            Runnable[] demandCallbacks = new Runnable[multiplexerContentSources.length];
-            for (int i = 0; i < multiplexerContentSources.length; i++)
+            for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
             {
-                demandCallbacks[i] = multiplexerContentSources[i].demandCallback;
-                multiplexerContentSources[i].demandCallback = null;
-                multiplexerContentSources[i].chunk = Content.Chunk.slice(chunk);
+                multiplexerContentSource.onDemandCallback(Content.Chunk.slice(chunk));
             }
-            try (AutoLock ignore = lock.lock())
-            {
-                demanded = false;
-            }
+        }
 
-            for (int i = 0; i < demandCallbacks.length; i++)
+        private void registerFailure(Throwable failure)
+        {
+            while (true)
             {
-                Runnable demandCallback = demandCallbacks[i];
-                if (LOG.isDebugEnabled())
-                    LOG.debug("Content source #{} registered callback {}", i, demandCallback);
-                executor.execute(demandCallback);
-                if (LOG.isDebugEnabled())
-                    LOG.debug("Executed content source #{}'s callback", i);
+                long encoded = counters.get();
+                int failures = AtomicBiInteger.getHi(encoded) + 1;
+                int demands = AtomicBiInteger.getLo(encoded);
+                if (demands == multiplexerContentSources.length - failures)
+                    demands = 0;
+                if (counters.compareAndSet(encoded, failures, demands))
+                {
+                    if (failures == multiplexerContentSources.length)
+                        originalContentSource.fail(failure);
+                    else if (demands == 0)
+                        originalContentSource.demand(this::onDemandCallback);
+                    break;
+                }
             }
         }
 
         private void registerDemand()
         {
-            boolean demandNow = false;
-            try (AutoLock ignore = lock.lock())
+            while (true)
             {
-                boolean allDemanded = true;
-                for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
+                long encoded = counters.get();
+                int failures = AtomicBiInteger.getHi(encoded);
+                int demands = AtomicBiInteger.getLo(encoded) + 1;
+                if (demands == multiplexerContentSources.length - failures)
+                    demands = 0;
+                if (counters.compareAndSet(encoded, failures, demands))
                 {
-                    if (multiplexerContentSource.demandCallback == null)
-                    {
-                        allDemanded = false;
-                        break;
-                    }
-                }
-
-                if (allDemanded && !demanded)
-                {
-                    demandNow = demanded = true;
-                    if (LOG.isDebugEnabled())
-                        LOG.debug("All {} content sources demanded, demanding", multiplexerContentSources.length);
+                    if (demands == 0)
+                        originalContentSource.demand(this::onDemandCallback);
+                    break;
                 }
             }
-            if (demandNow)
-                originalContentSource.demand(this::onDemandCallback);
         }
 
         private class MultiplexerContentSource implements Content.Source
@@ -256,10 +223,30 @@ public class ResponseNotifier
                 this.index = index;
             }
 
+            private void onDemandCallback(Content.Chunk chunk)
+            {
+                this.chunk = chunk;
+                Runnable callback = this.demandCallback;
+                this.demandCallback = null;
+                if (callback != null)
+                {
+                    executor.execute(() ->
+                    {
+                        try
+                        {
+                            callback.run();
+                        }
+                        catch (Throwable x)
+                        {
+                            fail(x);
+                        }
+                    });
+                }
+            }
+
             @Override
             public Content.Chunk read()
             {
-                demandIfAllRead();
                 if (chunk instanceof AlreadyReadChunk)
                 {
                     if (LOG.isDebugEnabled())
@@ -268,7 +255,8 @@ public class ResponseNotifier
                 }
 
                 Content.Chunk result = chunk;
-                chunk = AlreadyReadChunk.INSTANCE;
+                if (result != null && !result.isTerminal())
+                    chunk = AlreadyReadChunk.INSTANCE;
                 if (LOG.isDebugEnabled())
                     LOG.debug("Content source #{} read current chunk: {}", index, result);
                 return result;
@@ -286,7 +274,13 @@ public class ResponseNotifier
             @Override
             public void fail(Throwable failure)
             {
-                originalContentSource.fail(failure);
+                Content.Chunk c = chunk;
+                if (c instanceof Content.Chunk.Error)
+                    return;
+                if (c != null)
+                    c.release();
+                registerFailure(failure);
+                onDemandCallback(Content.Chunk.from(failure));
             }
         }
 
