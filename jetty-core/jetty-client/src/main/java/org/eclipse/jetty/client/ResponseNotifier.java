@@ -286,7 +286,7 @@ public class ResponseNotifier
 
         private static class AlreadyReadChunk implements Content.Chunk
         {
-            static AlreadyReadChunk INSTANCE = new AlreadyReadChunk();
+            static final AlreadyReadChunk INSTANCE = new AlreadyReadChunk();
 
             @Override
             public ByteBuffer getByteBuffer()
