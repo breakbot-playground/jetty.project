@@ -52,6 +52,7 @@ import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.toolchain.test.Net;
 import org.eclipse.jetty.util.Blocker;
+import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.IO;
 import org.eclipse.jetty.util.IteratingCallback;
@@ -796,42 +797,60 @@ public class HttpClientTest extends AbstractTest
 
     @ParameterizedTest
     @MethodSource("transports")
+    public void testContentSourceListeners(Transport transport) throws Exception
+    {
+        final int TOTAL_BYTES = 64;
+        start(transport, new TestProcessor(TOTAL_BYTES));
+
+        List<Content.Chunk> chunks = new CopyOnWriteArrayList<>();
+        CompleteContentSourceListener listener = new CompleteContentSourceListener()
+        {
+            @Override
+            public void onContentSource(Response response, Content.Source contentSource)
+            {
+                accumulateChunks(response, contentSource, chunks);
+            }
+        };
+        client.newRequest(newURI(transport))
+            .path("/")
+            .send(listener);
+        listener.await(5, TimeUnit.SECONDS);
+
+        assertThat(listener.result.getResponse().getStatus(), is(200));
+        assertThat(chunks.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
+        assertThat(chunks.get(chunks.size() - 1).isLast(), is(true));
+    }
+
+    @ParameterizedTest
+    @MethodSource("transports")
+    public void testContentSourceListenersFailure(Transport transport) throws Exception
+    {
+        final int TOTAL_BYTES = 64;
+        start(transport, new TestProcessor(TOTAL_BYTES));
+
+        CompleteContentSourceListener listener = new CompleteContentSourceListener()
+        {
+            @Override
+            public void onContentSource(Response response, Content.Source contentSource)
+            {
+                contentSource.fail(new Exception("Synthetic Failure"));
+            }
+        };
+        client.newRequest(newURI(transport))
+            .path("/")
+            .send(listener);
+        listener.await(5, TimeUnit.SECONDS);
+
+        assertThat(listener.result.isFailed(), is(true));
+        assertThat(listener.result.getFailure().getMessage(), is("Synthetic Failure"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("transports")
     public void testParallelContentSourceListeners(Transport transport) throws Exception
     {
         final int TOTAL_BYTES = 64;
-        start(transport, new Handler.Processor()
-        {
-            @Override
-            public void process(Request request, org.eclipse.jetty.server.Response response, Callback callback)
-            {
-                response.getHeaders().put(HttpHeader.CONTENT_TYPE, "text/plain");
-
-                IteratingCallback iteratingCallback = new IteratingCallback()
-                {
-                    int count = 0;
-                    @Override
-                    protected Action process()
-                    {
-                        boolean last = ++count == TOTAL_BYTES;
-                        response.write(last, ByteBuffer.wrap(new byte[1]), this);
-                        return last ? Action.SUCCEEDED : Action.SCHEDULED;
-                    }
-
-                    @Override
-                    protected void onCompleteSuccess()
-                    {
-                        callback.succeeded();
-                    }
-
-                    @Override
-                    protected void onCompleteFailure(Throwable cause)
-                    {
-                        callback.failed(cause);
-                    }
-                };
-                iteratingCallback.iterate();
-            }
-        });
+        start(transport, new TestProcessor(TOTAL_BYTES));
 
         List<Content.Chunk> chunks1 = new CopyOnWriteArrayList<>();
         List<Content.Chunk> chunks2 = new CopyOnWriteArrayList<>();
@@ -839,32 +858,20 @@ public class HttpClientTest extends AbstractTest
 
         ContentResponse resp = client.newRequest(newURI(transport))
             .path("/")
-            .onContentSource((response, contentSource) -> onContentSource(response, contentSource, chunks1))
-            .onContentSource((response, contentSource) -> onContentSource(response, contentSource, chunks2))
-            .onContentSource((response, contentSource) -> onContentSource(response, contentSource, chunks3))
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks1))
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks2))
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks3))
             .send();
 
         assertThat(resp.getStatus(), is(200));
         assertThat(resp.getContent().length, is(TOTAL_BYTES));
 
         assertThat(chunks1.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
+        assertThat(chunks1.get(chunks1.size() - 1).isLast(), is(true));
         assertThat(chunks2.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
+        assertThat(chunks2.get(chunks2.size() - 1).isLast(), is(true));
         assertThat(chunks3.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
-    }
-
-    private static void onContentSource(Response response, Content.Source contentSource, List<Content.Chunk> chunks)
-    {
-        Content.Chunk chunk = contentSource.read();
-        if (chunk == null)
-        {
-            contentSource.demand(() -> onContentSource(response, contentSource, chunks));
-            return;
-        }
-
-        chunks.add(chunk);
-
-        if (!chunk.isLast())
-            contentSource.demand(() -> onContentSource(response, contentSource, chunks));
+        assertThat(chunks3.get(chunks3.size() - 1).isLast(), is(true));
     }
 
     @ParameterizedTest
@@ -872,52 +879,27 @@ public class HttpClientTest extends AbstractTest
     public void testParallelContentSourceListenersPartialFailure(Transport transport) throws Exception
     {
         final int TOTAL_BYTES = 64;
-        start(transport, new Handler.Processor()
-        {
-            @Override
-            public void process(Request request, org.eclipse.jetty.server.Response response, Callback callback)
-            {
-                response.getHeaders().put(HttpHeader.CONTENT_TYPE, "text/plain");
-
-                IteratingCallback iteratingCallback = new IteratingCallback()
-                {
-                    int count = 0;
-                    @Override
-                    protected Action process()
-                    {
-                        boolean last = ++count == TOTAL_BYTES;
-                        response.write(last, ByteBuffer.wrap(new byte[1]), this);
-                        return last ? Action.SUCCEEDED : Action.SCHEDULED;
-                    }
-
-                    @Override
-                    protected void onCompleteSuccess()
-                    {
-                        callback.succeeded();
-                    }
-
-                    @Override
-                    protected void onCompleteFailure(Throwable cause)
-                    {
-                        callback.failed(cause);
-                    }
-                };
-                iteratingCallback.iterate();
-            }
-        });
+        start(transport, new TestProcessor(TOTAL_BYTES));
 
         List<Content.Chunk> chunks1 = new CopyOnWriteArrayList<>();
         List<Content.Chunk> chunks2 = new CopyOnWriteArrayList<>();
-        EndListener endListener = new EndListener();
+        CompleteContentSourceListener listener = new CompleteContentSourceListener()
+        {
+            @Override
+            public void onContentSource(Response response, Content.Source contentSource)
+            {
+                contentSource.fail(new Exception("Synthetic Failure"));
+            }
+        };
         client.newRequest(newURI(transport))
             .path("/")
-            .onContentSource((response, contentSource) -> onContentSource(response, contentSource, chunks1))
-            .onContentSource((response, contentSource) -> onContentSource(response, contentSource, chunks2))
-            .send(endListener);
-        assertThat(endListener.await(5, TimeUnit.SECONDS), is(true));
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks1))
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks2))
+            .send(listener);
+        assertThat(listener.await(5, TimeUnit.SECONDS), is(true));
 
-        assertThat(endListener.result.isFailed(), is(false));
-        assertThat(endListener.result.getResponse().getStatus(), is(200));
+        assertThat(listener.result.isFailed(), is(false));
+        assertThat(listener.result.getResponse().getStatus(), is(200));
 
         assertThat(chunks1.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
         assertThat(chunks2.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
@@ -927,54 +909,109 @@ public class HttpClientTest extends AbstractTest
     @MethodSource("transports")
     public void testParallelContentSourceListenersTotalFailure(Transport transport) throws Exception
     {
-        final int TOTAL_BYTES = 64;
-        start(transport, new Handler.Processor()
+        start(transport, new TestProcessor(64));
+
+        CompleteContentSourceListener listener = new CompleteContentSourceListener()
         {
             @Override
-            public void process(Request request, org.eclipse.jetty.server.Response response, Callback callback)
+            public void onContentSource(Response response, Content.Source contentSource)
             {
-                response.getHeaders().put(HttpHeader.CONTENT_TYPE, "text/plain");
-
-                IteratingCallback iteratingCallback = new IteratingCallback()
-                {
-                    int count = 0;
-                    @Override
-                    protected Action process()
-                    {
-                        boolean last = ++count == TOTAL_BYTES;
-                        response.write(last, ByteBuffer.wrap(new byte[1]), this);
-                        return last ? Action.SUCCEEDED : Action.SCHEDULED;
-                    }
-
-                    @Override
-                    protected void onCompleteSuccess()
-                    {
-                        callback.succeeded();
-                    }
-
-                    @Override
-                    protected void onCompleteFailure(Throwable cause)
-                    {
-                        callback.failed(cause);
-                    }
-                };
-                iteratingCallback.iterate();
+                contentSource.fail(new Exception("Synthetic Failure"));
             }
-        });
-
-        EndListener endListener = new EndListener();
+        };
         client.newRequest(newURI(transport))
             .path("/")
             .onContentSource((response, contentSource) -> contentSource.fail(new Exception("Synthetic Failure")))
             .onContentSource((response, contentSource) -> contentSource.fail(new Exception("Synthetic Failure")))
-            .send(endListener);
-        assertThat(endListener.await(5, TimeUnit.SECONDS), is(true));
+            .send(listener);
+        assertThat(listener.await(5, TimeUnit.SECONDS), is(true));
 
-        assertThat(endListener.result.isFailed(), is(true));
-        assertThat(endListener.result.getFailure().getMessage(), is("Synthetic Failure"));
+        assertThat(listener.result.isFailed(), is(true));
+        assertThat(listener.result.getFailure().getMessage(), is("Synthetic Failure"));
     }
 
-    private static class EndListener implements Response.CompleteListener, Response.ContentSourceListener
+    private static void sleep(long time) throws IOException
+    {
+        try
+        {
+            Thread.sleep(time);
+        }
+        catch (InterruptedException x)
+        {
+            throw new InterruptedIOException();
+        }
+    }
+
+    private static void accumulateChunks(Response response, Content.Source contentSource, List<Content.Chunk> chunks)
+    {
+        Content.Chunk chunk = contentSource.read();
+        if (chunk == null)
+        {
+            contentSource.demand(() -> accumulateChunks(response, contentSource, chunks));
+            return;
+        }
+
+        chunks.add(duplicateAndRelease(chunk));
+
+        if (!chunk.isLast())
+            contentSource.demand(() -> accumulateChunks(response, contentSource, chunks));
+    }
+
+    private static Content.Chunk duplicateAndRelease(Content.Chunk chunk)
+    {
+        if (chunk == null || chunk.isTerminal())
+            return chunk;
+
+        ByteBuffer buffer = BufferUtil.allocate(chunk.remaining());
+        int pos = BufferUtil.flipToFill(buffer);
+        buffer.put(chunk.getByteBuffer());
+        BufferUtil.flipToFlush(buffer, pos);
+        chunk.release();
+        return Content.Chunk.from(buffer, chunk.isLast());
+    }
+
+    private static class TestProcessor extends Handler.Processor
+    {
+        private final int totalBytes;
+
+        private TestProcessor(int totalBytes)
+        {
+            this.totalBytes = totalBytes;
+        }
+
+        @Override
+        public void process(Request request, org.eclipse.jetty.server.Response response, Callback callback) throws Exception
+        {
+            response.getHeaders().put(HttpHeader.CONTENT_TYPE, "text/plain");
+
+            IteratingCallback iteratingCallback = new IteratingCallback()
+            {
+                int count = 0;
+                @Override
+                protected Action process()
+                {
+                    boolean last = ++count == totalBytes;
+                    response.write(last, ByteBuffer.wrap(new byte[1]), this);
+                    return last ? Action.SUCCEEDED : Action.SCHEDULED;
+                }
+
+                @Override
+                protected void onCompleteSuccess()
+                {
+                    callback.succeeded();
+                }
+
+                @Override
+                protected void onCompleteFailure(Throwable cause)
+                {
+                    callback.failed(cause);
+                }
+            };
+            iteratingCallback.iterate();
+        }
+    }
+
+    private static abstract class CompleteContentSourceListener implements Response.CompleteListener, Response.ContentSourceListener
     {
         private final CountDownLatch latch = new CountDownLatch(1);
         private Result result;
@@ -986,27 +1023,9 @@ public class HttpClientTest extends AbstractTest
             latch.countDown();
         }
 
-        @Override
-        public void onContentSource(Response response, Content.Source contentSource)
-        {
-            contentSource.fail(new Exception("Synthetic Failure"));
-        }
-
         public boolean await(long timeout, TimeUnit unit) throws InterruptedException
         {
             return latch.await(timeout, unit);
-        }
-    }
-
-    private void sleep(long time) throws IOException
-    {
-        try
-        {
-            Thread.sleep(time);
-        }
-        catch (InterruptedException x)
-        {
-            throw new InterruptedIOException();
         }
     }
 }
