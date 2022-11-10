@@ -241,7 +241,7 @@ public abstract class HttpReceiver
     protected void responseHeaders(HttpExchange exchange, boolean noContent)
     {
         if (LOG.isDebugEnabled())
-            LOG.debug("All headers arrived with {} on {}", (noContent ? "no content" : "some content") , this);
+            LOG.debug("All headers arrived with {} on {}", (noContent ? "no content" : "some content"), this);
 
         invoker.run(() ->
         {
