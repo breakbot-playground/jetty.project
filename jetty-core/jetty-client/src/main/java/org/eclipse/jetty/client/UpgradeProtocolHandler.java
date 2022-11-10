@@ -14,7 +14,6 @@
 package org.eclipse.jetty.client;
 
 import java.util.List;
-import java.util.concurrent.Executor;
 
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.api.Response;
