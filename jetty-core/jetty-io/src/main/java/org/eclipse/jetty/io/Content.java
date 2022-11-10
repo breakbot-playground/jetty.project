@@ -704,6 +704,12 @@ public class Content
             {
                 return true;
             }
+
+            @Override
+            public String toString()
+            {
+                return String.format("%s@%x{c=%s}", getClass().getSimpleName(), hashCode(), cause);
+            }
         }
     }
 }
