@@ -230,8 +230,9 @@ public class ResponseNotifier
                 this.demandCallback = null;
                 if (callback != null)
                 {
-                    executor.execute(() ->
-                    {
+                    // TODO should we use the executor or not?
+//                    executor.execute(() ->
+//                    {
                         try
                         {
                             callback.run();
@@ -240,7 +241,7 @@ public class ResponseNotifier
                         {
                             fail(x);
                         }
-                    });
+//                    });
                 }
             }
 
