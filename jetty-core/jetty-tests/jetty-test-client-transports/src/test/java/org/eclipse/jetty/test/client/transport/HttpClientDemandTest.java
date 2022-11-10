@@ -14,6 +14,7 @@
 package org.eclipse.jetty.test.client.transport;
 
 import java.io.InterruptedIOException;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.util.Queue;
 import java.util.Random;
@@ -185,7 +186,7 @@ public class HttpClientDemandTest extends AbstractTest
         assertNotNull(demand);
         long begin = NanoTime.now();
         // Spin on demand until content.length bytes have been read.
-        while (content.length > sum(contentQueue))
+        while (content.length > contentQueue.stream().mapToInt(Buffer::remaining).sum())
         {
             if (NanoTime.millisSince(begin) > 5000L)
                 fail("Failed to demand all content");
@@ -204,16 +205,6 @@ public class HttpClientDemandTest extends AbstractTest
         assertArrayEquals(content, received);
 
         callbackQueue.forEach(Callback::succeeded);
-    }
-
-    private static int sum(Queue<ByteBuffer> contentQueue)
-    {
-        int total = 0;
-        for (ByteBuffer byteBuffer : contentQueue)
-        {
-            total += byteBuffer.remaining();
-        }
-        return total;
     }
 
     @ParameterizedTest
