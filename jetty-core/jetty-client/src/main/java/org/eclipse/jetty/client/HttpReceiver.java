@@ -131,10 +131,13 @@ public abstract class HttpReceiver
      */
     protected void responseBegin(HttpExchange exchange)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Response beginning on {}", this);
+
         invoker.run(() ->
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("responseBegin");
+                LOG.debug("Invoking responseBegin on {}", this);
 
             if (exchange.isResponseComplete())
                 return;
@@ -174,10 +177,13 @@ public abstract class HttpReceiver
      */
     protected void responseHeader(HttpExchange exchange, HttpField field)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Header {} arrived on {}", field, this);
+
         invoker.run(() ->
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("responseHeader");
+                LOG.debug("Invoking responseHeader on {}", this);
 
             if (exchange.isResponseComplete())
                 return;
@@ -234,10 +240,13 @@ public abstract class HttpReceiver
      */
     protected void responseHeaders(HttpExchange exchange, boolean noContent)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("All headers arrived with {} on {}", (noContent ? "no content" : "some content") , this);
+
         invoker.run(() ->
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("responseHeaders");
+                LOG.debug("Invoking responseHeaders on {}", this);
 
             if (exchange.isResponseComplete())
                 return;
@@ -304,6 +313,8 @@ public abstract class HttpReceiver
      */
     protected void responseContentAvailable()
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Response content available on {}", this);
         contentSource.onDataAvailable();
     }
 
@@ -318,10 +329,13 @@ public abstract class HttpReceiver
      */
     protected void responseSuccess(HttpExchange exchange, Runnable afterSuccessTask)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Succeeding response on {}", this);
+
         invoker.run(() ->
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("responseSuccess");
+                LOG.debug("Invoking responseSuccess on {}", this);
 
             // Mark atomically the response as completed, with respect
             // to concurrency between response success and response failure.
@@ -357,10 +371,13 @@ public abstract class HttpReceiver
      */
     protected void responseFailure(Throwable failure, Promise<Boolean> promise)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Failing response with {} on {}", failure, this);
+
         invoker.run(() ->
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("responseFailure");
+                LOG.debug("Invoking responseFailure on {}", this);
 
             HttpExchange exchange = getHttpExchange();
             // In case of a response error, the failure has already been notified
@@ -449,8 +466,14 @@ public abstract class HttpReceiver
 
     public void abort(HttpExchange exchange, Throwable failure, Promise<Boolean> promise)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("Aborting with {} on {}", failure, this);
+
         invoker.run(() ->
         {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Invoking abort on {}", this);
+
             if (responseState == ResponseState.FAILURE)
             {
                 promise.succeeded(false);
