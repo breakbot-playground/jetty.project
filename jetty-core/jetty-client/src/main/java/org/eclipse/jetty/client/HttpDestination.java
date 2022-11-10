@@ -76,7 +76,7 @@ public class HttpDestination extends ContainerLifeCycle implements Destination, 
         this.exchanges = newExchangeQueue(client);
 
         this.requestNotifier = new RequestNotifier(client);
-        this.responseNotifier = new ResponseNotifier(client.getExecutor());
+        this.responseNotifier = new ResponseNotifier();
 
         this.requestTimeouts = new RequestTimeouts(client.getScheduler());
 

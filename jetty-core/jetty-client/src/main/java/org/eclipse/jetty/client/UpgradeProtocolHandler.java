@@ -32,13 +32,6 @@ public class UpgradeProtocolHandler implements ProtocolHandler
 {
     private final List<String> protocols = List.of("websocket", "h2c");
 
-    private final Executor executor;
-
-    public UpgradeProtocolHandler(Executor executor)
-    {
-        this.executor = executor;
-    }
-
     @Override
     public String getName()
     {
@@ -106,7 +99,7 @@ public class UpgradeProtocolHandler implements ProtocolHandler
         HttpConversation conversation = request.getConversation();
         conversation.updateResponseListeners(null);
         List<Response.ResponseListener> responseListeners = conversation.getResponseListeners();
-        ResponseNotifier notifier = new ResponseNotifier(executor);
+        ResponseNotifier notifier = new ResponseNotifier();
         notifier.forwardFailure(responseListeners, response, responseFailure);
         notifier.notifyComplete(responseListeners, new Result(request, requestFailure, response, responseFailure));
     }

@@ -34,13 +34,6 @@ public class ResponseNotifier
 {
     private static final Logger LOG = LoggerFactory.getLogger(ResponseNotifier.class);
 
-    private final Executor executor;
-
-    public ResponseNotifier(Executor executor)
-    {
-        this.executor = executor;
-    }
-
     public void notifyBegin(List<Response.ResponseListener> listeners, Response response)
     {
         for (Response.ResponseListener listener : listeners)
@@ -134,7 +127,7 @@ public class ResponseNotifier
         }
     }
 
-    private class Multiplexer
+    private static class Multiplexer
     {
         private static final Logger LOG = LoggerFactory.getLogger(Multiplexer.class);
 
@@ -168,6 +161,8 @@ public class ResponseNotifier
                 LOG.debug("Original content source's demand calling back");
 
             Content.Chunk chunk = originalContentSource.read();
+            // Multiplexer content sources are invoked sequentially to be consistent with other listeners,
+            // applications can parallelize from the listeners they register if needed.
             for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
             {
                 multiplexerContentSource.onDemandCallback(Content.Chunk.slice(chunk));
@@ -230,18 +225,14 @@ public class ResponseNotifier
                 this.demandCallback = null;
                 if (callback != null)
                 {
-                    // TODO should we use the executor or not?
-//                    executor.execute(() ->
-//                    {
-                        try
-                        {
-                            callback.run();
-                        }
-                        catch (Throwable x)
-                        {
-                            fail(x);
-                        }
-//                    });
+                    try
+                    {
+                        callback.run();
+                    }
+                    catch (Throwable x)
+                    {
+                        fail(x);
+                    }
                 }
             }
 
