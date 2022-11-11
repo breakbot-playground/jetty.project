@@ -64,6 +64,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -883,26 +884,60 @@ public class HttpClientTest extends AbstractTest
 
         List<Content.Chunk> chunks1 = new CopyOnWriteArrayList<>();
         List<Content.Chunk> chunks2 = new CopyOnWriteArrayList<>();
-        CompleteContentSourceListener listener = new CompleteContentSourceListener()
-        {
-            @Override
-            public void onContentSource(Response response, Content.Source contentSource)
-            {
-                contentSource.fail(new Exception("Synthetic Failure"));
-            }
-        };
-        client.newRequest(newURI(transport))
+        List<Content.Chunk> chunks3 = new CopyOnWriteArrayList<>();
+        ContentResponse contentResponse = client.newRequest(newURI(transport))
             .path("/")
             .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks1))
             .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks2))
-            .send(listener);
-        assertThat(listener.await(5, TimeUnit.SECONDS), is(true));
-
-        assertThat(listener.result.isFailed(), is(false));
-        assertThat(listener.result.getResponse().getStatus(), is(200));
+            .onContentSource((response, contentSource) ->
+            {
+                contentSource.fail(new Exception("Synthetic Failure"));
+                contentSource.demand(() -> chunks3.add(contentSource.read()));
+            })
+            .send();
+        assertThat(contentResponse.getStatus(), is(200));
+        assertThat(contentResponse.getContent().length, is(TOTAL_BYTES));
 
         assertThat(chunks1.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
         assertThat(chunks2.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
+        assertThat(chunks3.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(0));
+        assertThat(chunks3.size(), is(1));
+        assertThat(chunks3.get(0), instanceOf(Content.Chunk.Error.class));
+    }
+
+    @ParameterizedTest
+    @MethodSource("transports")
+    public void testParallelContentSourceListenersPartialFailureInSpawnedThread(Transport transport) throws Exception
+    {
+        final int TOTAL_BYTES = 64;
+        start(transport, new TestProcessor(TOTAL_BYTES));
+
+        List<Content.Chunk> chunks1 = new CopyOnWriteArrayList<>();
+        List<Content.Chunk> chunks2 = new CopyOnWriteArrayList<>();
+        List<Content.Chunk> chunks3 = new CopyOnWriteArrayList<>();
+        CountDownLatch chunks3Latch = new CountDownLatch(1);
+        ContentResponse contentResponse = client.newRequest(newURI(transport))
+            .path("/")
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks1))
+            .onContentSource((response, contentSource) -> accumulateChunks(response, contentSource, chunks2))
+            .onContentSource((response, contentSource) ->
+                new Thread(() ->
+                {
+                    contentSource.fail(new Exception("Synthetic Failure"));
+                    contentSource.demand(() -> chunks3.add(contentSource.read()));
+                    chunks3Latch.countDown();
+                }).start())
+            .send();
+        assertThat(contentResponse.getStatus(), is(200));
+        assertThat(contentResponse.getContent().length, is(TOTAL_BYTES));
+
+        assertThat(chunks1.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
+        assertThat(chunks2.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(TOTAL_BYTES));
+
+        assertThat(chunks3Latch.await(5, TimeUnit.SECONDS), is(true));
+        assertThat(chunks3.stream().mapToInt(c -> c.getByteBuffer().remaining()).sum(), is(0));
+        assertThat(chunks3.size(), is(1));
+        assertThat(chunks3.get(0), instanceOf(Content.Chunk.Error.class));
     }
 
     @ParameterizedTest

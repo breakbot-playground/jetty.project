@@ -634,7 +634,7 @@ public abstract class HttpReceiver
         public Content.Chunk read()
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Reading");
+                LOG.debug("Reading from {}", this);
             Content.Chunk chunk = consumeCurrentChunk();
             if (chunk != null)
                 return chunk;
@@ -646,7 +646,7 @@ public abstract class HttpReceiver
         public void onDataAvailable()
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("onDataAvailable, demandCallback: {}", demandCallback);
+                LOG.debug("onDataAvailable on {}", this);
             if (demandCallback != null)
                 invokeDemandCallback();
         }
@@ -654,7 +654,7 @@ public abstract class HttpReceiver
         private Content.Chunk consumeCurrentChunk()
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Consuming current chunk {}", currentChunk);
+                LOG.debug("Consuming current chunk from {}", this);
             Content.Chunk chunk = currentChunk;
             currentChunk = Content.Chunk.next(chunk);
             return chunk;
@@ -664,7 +664,7 @@ public abstract class HttpReceiver
         public void demand(Runnable demandCallback)
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Registering demand {}", demandCallback);
+                LOG.debug("Registering demand on {}", this);
             if (demandCallback == null)
                 throw new IllegalArgumentException();
             if (this.demandCallback != null)
@@ -676,7 +676,7 @@ public abstract class HttpReceiver
         private void processDemand()
         {
             if (LOG.isDebugEnabled())
-                LOG.debug("Processing demand, current chunk: {}", currentChunk);
+                LOG.debug("Processing demand on {}", this);
             while (true)
             {
                 if (currentChunk != null)
@@ -698,7 +698,7 @@ public abstract class HttpReceiver
             Runnable demandCallback = this.demandCallback;
             this.demandCallback = null;
             if (LOG.isDebugEnabled())
-                LOG.debug("Invoking demand callback {}", demandCallback);
+                LOG.debug("Invoking demand callback on {}", this);
             if (demandCallback != null)
             {
                 try
@@ -715,11 +715,19 @@ public abstract class HttpReceiver
         @Override
         public void fail(Throwable failure)
         {
+            if (LOG.isDebugEnabled())
+                LOG.debug("Failing {}", this);
             if (currentChunk != null)
                 currentChunk.release();
             if (currentChunk == null || !(currentChunk instanceof Content.Chunk.Error))
                 HttpReceiver.this.failAndClose(failure);
             currentChunk = Content.Chunk.from(failure);
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("%s@%x{c=%s,d=%s}", getClass().getSimpleName(), hashCode(), currentChunk, demandCallback);
         }
     }
 }

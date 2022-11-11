@@ -17,7 +17,6 @@ import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.Executor;
 
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
@@ -163,9 +162,11 @@ public class ResponseNotifier
             Content.Chunk chunk = originalContentSource.read();
             // Multiplexer content sources are invoked sequentially to be consistent with other listeners,
             // applications can parallelize from the listeners they register if needed.
+            if (LOG.isDebugEnabled())
+                LOG.debug("Read from original content source {}", chunk);
             for (MultiplexerContentSource multiplexerContentSource : multiplexerContentSources)
             {
-                multiplexerContentSource.onDemandCallback(Content.Chunk.slice(chunk));
+                multiplexerContentSource.onChunk(chunk);
             }
         }
 
@@ -180,6 +181,8 @@ public class ResponseNotifier
                     demands = 0;
                 if (counters.compareAndSet(encoded, failures, demands))
                 {
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("Registered failure; failures={} demands={}", failures, demands);
                     if (failures == multiplexerContentSources.length)
                         originalContentSource.fail(failure);
                     else if (demands == 0)
@@ -200,6 +203,8 @@ public class ResponseNotifier
                     demands = 0;
                 if (counters.compareAndSet(encoded, failures, demands))
                 {
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("Registered demand; failures={} demands={}", failures, demands);
                     if (demands == 0)
                         originalContentSource.demand(this::onDemandCallback);
                     break;
@@ -218,10 +223,23 @@ public class ResponseNotifier
                 this.index = index;
             }
 
-            private void onDemandCallback(Content.Chunk chunk)
+            private void onChunk(Content.Chunk chunk)
             {
-                this.chunk = chunk;
+                Content.Chunk currentChunk = this.chunk;
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Registering content in multiplexed content source #{} that contains {}", index, currentChunk);
+                if (currentChunk == null || currentChunk == AlreadyReadChunk.INSTANCE)
+                    this.chunk = Content.Chunk.slice(chunk);
+                else if (!currentChunk.isLast())
+                    throw new IllegalStateException("Cannot overwrite chunk");
+                onDemandCallback();
+            }
+
+            private void onDemandCallback()
+            {
                 Runnable callback = this.demandCallback;
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Content source #{} invoking demand callback {}", index, callback);
                 this.demandCallback = null;
                 if (callback != null)
                 {
@@ -250,7 +268,7 @@ public class ResponseNotifier
                 if (result != null && !result.isTerminal())
                     chunk = AlreadyReadChunk.INSTANCE;
                 if (LOG.isDebugEnabled())
-                    LOG.debug("Content source #{} read current chunk: {}", index, result);
+                    LOG.debug("Content source #{} reading current chunk {}", index, result);
                 return result;
             }
 
@@ -260,19 +278,28 @@ public class ResponseNotifier
                 if (this.demandCallback != null)
                     throw new IllegalStateException();
                 this.demandCallback = Objects.requireNonNull(demandCallback);
-                registerDemand();
+                Content.Chunk currentChunk = this.chunk;
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Content source #{} demand while current chunk is {}", index, currentChunk);
+                if (currentChunk == null || currentChunk == AlreadyReadChunk.INSTANCE)
+                    registerDemand();
+                else
+                    onDemandCallback();
             }
 
             @Override
             public void fail(Throwable failure)
             {
-                Content.Chunk c = chunk;
-                if (c instanceof Content.Chunk.Error)
+                Content.Chunk currentChunk = chunk;
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Content source #{} fail while current chunk is {}", index, currentChunk);
+                if (currentChunk instanceof Content.Chunk.Error)
                     return;
-                if (c != null)
-                    c.release();
+                if (currentChunk != null)
+                    currentChunk.release();
+                this.chunk = Content.Chunk.from(failure);
+                onDemandCallback();
                 registerFailure(failure);
-                onDemandCallback(Content.Chunk.from(failure));
             }
         }
 
@@ -302,6 +329,12 @@ public class ResponseNotifier
             public boolean release()
             {
                 throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public String toString()
+            {
+                return getClass().getSimpleName();
             }
         }
     }
