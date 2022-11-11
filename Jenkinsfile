@@ -12,7 +12,7 @@ pipeline {
     stage("Parallel Stage") {
       parallel {
         stage("Build / Test - JDK17") {
-          agent { node { label 'linux' } }
+          agent { node { label 'linux-no-docker' } }
           steps {
             timeout( time: 180, unit: 'MINUTES' ) {
               checkout scm
