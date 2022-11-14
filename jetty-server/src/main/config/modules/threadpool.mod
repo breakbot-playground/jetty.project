@@ -8,6 +8,7 @@ logging
 etc/jetty-threadpool.xml
 
 [ini-template]
+# tag::documentation[]
 ## Minimum number of pooled threads.
 #jetty.threadPool.minThreads=10
 
@@ -25,3 +26,4 @@ etc/jetty-threadpool.xml
 
 ## Whether to output a detailed dump.
 #jetty.threadPool.detailedDump=false
+# end::documentation[]
